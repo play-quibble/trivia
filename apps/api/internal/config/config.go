@@ -1,3 +1,7 @@
+// Package config loads runtime configuration from environment variables.
+// Using environment variables (rather than config files) is the standard
+// twelve-factor app approach and works cleanly with Kubernetes Secrets and
+// ConfigMaps, which are injected as env vars into pods.
 package config
 
 import (
@@ -5,28 +9,33 @@ import (
 	"os"
 )
 
-// Config holds all runtime configuration loaded from environment variables.
+// Config holds all runtime configuration for the API server.
+// Fields are grouped by concern; see .env.example for the full list of
+// supported variables and their defaults.
 type Config struct {
-	// HTTP
-	Addr string // e.g. ":8080"
+	// HTTP server listen address (e.g. ":8080" means all interfaces, port 8080)
+	Addr string
 
-	// Postgres (Neon)
+	// Postgres connection string — format: postgres://user:pass@host/dbname
 	DatabaseURL string
 
-	// Redis
+	// Redis address (host:port) and optional password
 	RedisAddr     string
 	RedisPassword string
 
-	// Auth0
-	Auth0Domain   string // e.g. "your-tenant.us.auth0.com"
-	Auth0Audience string // API identifier in Auth0
+	// Auth0 tenant domain (e.g. "your-tenant.us.auth0.com") and API audience
+	// identifier (the string you set when creating the API in Auth0 dashboard)
+	Auth0Domain   string
+	Auth0Audience string
 
-	// Observability
-	LogLevel string // "debug" | "info" | "warn" | "error"
+	// Minimum log level to emit: "debug" | "info" | "warn" | "error"
+	LogLevel string
 }
 
-// Load reads configuration from environment variables.
-// Missing required vars cause an error.
+// Load reads configuration from environment variables and returns a Config.
+// Required variables (DATABASE_URL, AUTH0_DOMAIN, AUTH0_AUDIENCE) cause a
+// panic if absent — better to crash at startup with a clear message than to
+// silently start with a broken config and fail on the first request.
 func Load() (*Config, error) {
 	c := &Config{
 		Addr:          getEnv("ADDR", ":8080"),
@@ -40,6 +49,8 @@ func Load() (*Config, error) {
 	return c, nil
 }
 
+// getEnv returns the value of the named environment variable, or fallback
+// if the variable is unset or empty.
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -47,6 +58,9 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
+// mustGetEnv returns the value of the named environment variable.
+// It panics if the variable is unset or empty, printing the variable name
+// so the operator knows exactly what to fix.
 func mustGetEnv(key string) string {
 	v := os.Getenv(key)
 	if v == "" {
