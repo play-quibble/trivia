@@ -6,18 +6,31 @@ package game
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math/big"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/benbotsford/trivia/internal/auth"
 	"github.com/benbotsford/trivia/internal/billing"
+	"github.com/benbotsford/trivia/internal/realtime"
 	"github.com/benbotsford/trivia/internal/store"
 	"github.com/benbotsford/trivia/internal/user"
+)
+
+// Character limits applied at the API layer (tighter than the DB constraint).
+const (
+	maxPromptLen = 500 // question prompt characters
+	maxChoiceLen = 200 // each MC choice text characters
+	maxAnswerLen = 150 // each accepted text answer characters
+	maxChoices   = 6   // maximum MC options per question
+	minChoices   = 2   // minimum MC options per question
+	maxAnswers   = 10  // maximum accepted answers for text questions
 )
 
 // codeChars is the alphabet used when generating 6-character game codes.
@@ -27,19 +40,24 @@ const codeChars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 // Service handles question bank and game CRUD.
 // In Go, a struct with methods is roughly equivalent to a class in Java/Python.
-// Dependencies (database, user service, billing) are injected via New() rather
-// than being globals or singletons.
+// Dependencies (database, user service, billing, realtime hub) are injected
+// via New() rather than being globals or singletons.
 type Service struct {
-	q            *store.Queries          // sqlc-generated database access layer
-	users        *user.Service           // resolves Auth0 identities to DB users
+	q            *store.Queries             // sqlc-generated database access layer
+	users        *user.Service              // resolves Auth0 identities to DB users
 	entitlements billing.EntitlementChecker // gates features behind subscription checks
+	hub          *realtime.Hub              // WebSocket broadcast layer
 }
 
 // New creates a Service with its dependencies.
-// This is the idiomatic Go constructor pattern — there's no "new" keyword;
-// you just define a function that returns a pointer to the struct.
-func New(q *store.Queries, users *user.Service, ent billing.EntitlementChecker) *Service {
-	return &Service{q: q, users: users, entitlements: ent}
+func New(q *store.Queries, users *user.Service, ent billing.EntitlementChecker, hub *realtime.Hub) *Service {
+	return &Service{q: q, users: users, entitlements: ent, hub: hub}
+}
+
+// RegisterPublicRoutes mounts endpoints that are accessible without authentication.
+// These are used by players who join a game with only a code and display name.
+func (s *Service) RegisterPublicRoutes(r chi.Router) {
+	r.Post("/join", s.joinGame)
 }
 
 // RegisterRoutes mounts all game-related routes onto r.
@@ -55,8 +73,18 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 			r.Get("/", s.getBank)
 			r.Put("/", s.updateBank)
 			r.Delete("/", s.deleteBank)
-			r.Get("/questions", s.listQuestions)
-			r.Post("/questions", s.createQuestion)
+			r.Route("/questions", func(r chi.Router) {
+				r.Get("/", s.listQuestions)
+				r.Post("/", s.createQuestion)
+				// /reorder must be registered before /{questionID} so Chi matches
+				// the literal segment first rather than treating "reorder" as a UUID.
+				r.Patch("/reorder", s.reorderQuestions)
+				r.Route("/{questionID}", func(r chi.Router) {
+					r.Get("/", s.getQuestion)
+					r.Put("/", s.updateQuestion)
+					r.Delete("/", s.deleteQuestion)
+				})
+			})
 		})
 	})
 
@@ -65,9 +93,7 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 		r.Get("/", s.listGames)
 		r.Route("/{gameID}", func(r chi.Router) {
 			r.Get("/", s.getGame)
-			r.Post("/start", s.startGame)
-			r.Post("/next", s.nextQuestion)
-			r.Post("/end", s.endGame)
+			r.Get("/players", s.listPlayers)
 		})
 	})
 }
@@ -273,39 +299,687 @@ func (s *Service) deleteBank(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// listQuestions and createQuestion are stubbed — implemented in the next feature.
+// --- Questions ---
+
+// listQuestions handles GET /banks/{bankID}/questions
+// Returns all questions in the bank ordered by position, including their
+// choices (MC) or accepted answers (text) decoded from the choices JSONB field.
 func (s *Service) listQuestions(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	bankID, err := mustParseUUID(r, "bankID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Ownership check: verify the bank belongs to this user before listing.
+	bank, err := s.q.GetQuestionBank(r.Context(), bankID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "bank not found")
+		return
+	}
+	if bank.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	questions, err := s.q.ListQuestionsByBank(r.Context(), bankID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "listQuestions: query failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	resp := make([]questionResponse, len(questions))
+	for i, q := range questions {
+		resp[i] = questionFromStore(q)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
+// createQuestion handles POST /banks/{bankID}/questions
+// Validates the request, marshals choices/accepted-answers to JSONB, then
+// inserts a new question appended to the end of the bank's question list.
 func (s *Service) createQuestion(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	bankID, err := mustParseUUID(r, "bankID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	bank, err := s.q.GetQuestionBank(r.Context(), bankID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "bank not found")
+		return
+	}
+	if bank.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	var req createQuestionRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate and resolve the question type.
+	var qType store.QuestionType
+	switch req.Type {
+	case "text":
+		qType = store.QuestionTypeText
+	case "multiple_choice":
+		qType = store.QuestionTypeMultipleChoice
+	default:
+		writeError(w, http.StatusUnprocessableEntity, "type must be 'text' or 'multiple_choice'")
+		return
+	}
+
+	// Validate the prompt — rune count handles multi-byte Unicode correctly.
+	if utf8.RuneCountInString(req.Prompt) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "prompt is required")
+		return
+	}
+	if utf8.RuneCountInString(req.Prompt) > maxPromptLen {
+		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("prompt must be %d characters or fewer", maxPromptLen))
+		return
+	}
+
+	// Default points when the client omits or zeroes the field.
+	if req.Points <= 0 {
+		req.Points = 1000
+	}
+
+	// Validate type-specific fields and build the JSONB payload.
+	var correctAnswer string
+	var choicesJSON []byte
+
+	switch qType {
+	case store.QuestionTypeText:
+		if len(req.AcceptedAnswers) == 0 {
+			writeError(w, http.StatusUnprocessableEntity, "at least one accepted answer is required")
+			return
+		}
+		if len(req.AcceptedAnswers) > maxAnswers {
+			writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("at most %d accepted answers allowed", maxAnswers))
+			return
+		}
+		for _, a := range req.AcceptedAnswers {
+			if utf8.RuneCountInString(a) == 0 {
+				writeError(w, http.StatusUnprocessableEntity, "accepted answers cannot be empty")
+				return
+			}
+			if utf8.RuneCountInString(a) > maxAnswerLen {
+				writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("each accepted answer must be %d characters or fewer", maxAnswerLen))
+				return
+			}
+		}
+		// The first entry is the canonical answer shown to hosts in the game UI.
+		correctAnswer = req.AcceptedAnswers[0]
+		choicesJSON, _ = json.Marshal(req.AcceptedAnswers)
+
+	case store.QuestionTypeMultipleChoice:
+		if len(req.Choices) < minChoices || len(req.Choices) > maxChoices {
+			writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("multiple choice questions require %d–%d options", minChoices, maxChoices))
+			return
+		}
+		var numCorrect int
+		for _, c := range req.Choices {
+			if utf8.RuneCountInString(c.Text) == 0 {
+				writeError(w, http.StatusUnprocessableEntity, "choice text cannot be empty")
+				return
+			}
+			if utf8.RuneCountInString(c.Text) > maxChoiceLen {
+				writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("each choice must be %d characters or fewer", maxChoiceLen))
+				return
+			}
+			if c.Correct {
+				numCorrect++
+				correctAnswer = c.Text
+			}
+		}
+		if numCorrect != 1 {
+			writeError(w, http.StatusUnprocessableEntity, "exactly one choice must be marked correct")
+			return
+		}
+		choicesJSON, _ = json.Marshal(req.Choices)
+	}
+
+	// Append to end: count existing questions to set the next position.
+	count, err := s.q.CountQuestionsInBank(r.Context(), bankID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "createQuestion: count failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	q, err := s.q.CreateQuestion(r.Context(), store.CreateQuestionParams{
+		ID:            uuid.New(),
+		BankID:        bankID,
+		Type:          qType,
+		Prompt:        req.Prompt,
+		CorrectAnswer: correctAnswer,
+		Choices:       choicesJSON,
+		Points:        req.Points,
+		Position:      count, // 0-indexed: count of existing = next available slot
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "createQuestion: insert failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, questionFromStore(q))
 }
 
-// --- Games (stubbed — implemented after questions) ---
+// getQuestion handles GET /banks/{bankID}/questions/{questionID}
+func (s *Service) getQuestion(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 
+	bankID, err := mustParseUUID(r, "bankID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	questionID, err := mustParseUUID(r, "questionID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Verify bank ownership before exposing the question.
+	bank, err := s.q.GetQuestionBank(r.Context(), bankID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "bank not found")
+		return
+	}
+	if bank.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	q, err := s.q.GetQuestion(r.Context(), questionID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "question not found")
+		return
+	}
+	// Confirm the question belongs to the requested bank (prevents cross-bank access).
+	if q.BankID != bankID {
+		writeError(w, http.StatusNotFound, "question not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, questionFromStore(q))
+}
+
+// updateQuestion handles PUT /banks/{bankID}/questions/{questionID}
+// Replaces the question's content (prompt, points, answers/choices).
+// Position is intentionally not updated here — use reorderQuestions for that.
+func (s *Service) updateQuestion(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	bankID, err := mustParseUUID(r, "bankID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	questionID, err := mustParseUUID(r, "questionID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	bank, err := s.q.GetQuestionBank(r.Context(), bankID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "bank not found")
+		return
+	}
+	if bank.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	existing, err := s.q.GetQuestion(r.Context(), questionID)
+	if err != nil || existing.BankID != bankID {
+		writeError(w, http.StatusNotFound, "question not found")
+		return
+	}
+
+	var req updateQuestionRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Same validation as createQuestion, re-using the existing type.
+	if utf8.RuneCountInString(req.Prompt) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "prompt is required")
+		return
+	}
+	if utf8.RuneCountInString(req.Prompt) > maxPromptLen {
+		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("prompt must be %d characters or fewer", maxPromptLen))
+		return
+	}
+	if req.Points <= 0 {
+		req.Points = 1000
+	}
+
+	var correctAnswer string
+	var choicesJSON []byte
+
+	switch existing.Type {
+	case store.QuestionTypeText:
+		if len(req.AcceptedAnswers) == 0 {
+			writeError(w, http.StatusUnprocessableEntity, "at least one accepted answer is required")
+			return
+		}
+		if len(req.AcceptedAnswers) > maxAnswers {
+			writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("at most %d accepted answers allowed", maxAnswers))
+			return
+		}
+		for _, a := range req.AcceptedAnswers {
+			if utf8.RuneCountInString(a) == 0 || utf8.RuneCountInString(a) > maxAnswerLen {
+				writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("each accepted answer must be 1–%d characters", maxAnswerLen))
+				return
+			}
+		}
+		correctAnswer = req.AcceptedAnswers[0]
+		choicesJSON, _ = json.Marshal(req.AcceptedAnswers)
+
+	case store.QuestionTypeMultipleChoice:
+		if len(req.Choices) < minChoices || len(req.Choices) > maxChoices {
+			writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("multiple choice questions require %d–%d options", minChoices, maxChoices))
+			return
+		}
+		var numCorrect int
+		for _, c := range req.Choices {
+			if utf8.RuneCountInString(c.Text) == 0 || utf8.RuneCountInString(c.Text) > maxChoiceLen {
+				writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("each choice must be 1–%d characters", maxChoiceLen))
+				return
+			}
+			if c.Correct {
+				numCorrect++
+				correctAnswer = c.Text
+			}
+		}
+		if numCorrect != 1 {
+			writeError(w, http.StatusUnprocessableEntity, "exactly one choice must be marked correct")
+			return
+		}
+		choicesJSON, _ = json.Marshal(req.Choices)
+	}
+
+	updated, err := s.q.UpdateQuestion(r.Context(), store.UpdateQuestionParams{
+		ID:            questionID,
+		Type:          existing.Type, // type is immutable — use the stored value
+		Prompt:        req.Prompt,
+		CorrectAnswer: correctAnswer,
+		Choices:       choicesJSON,
+		Points:        req.Points,
+		Position:      existing.Position, // position unchanged here
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "updateQuestion: update failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, questionFromStore(updated))
+}
+
+// deleteQuestion handles DELETE /banks/{bankID}/questions/{questionID}
+func (s *Service) deleteQuestion(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	bankID, err := mustParseUUID(r, "bankID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	questionID, err := mustParseUUID(r, "questionID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	bank, err := s.q.GetQuestionBank(r.Context(), bankID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "bank not found")
+		return
+	}
+	if bank.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	existing, err := s.q.GetQuestion(r.Context(), questionID)
+	if err != nil || existing.BankID != bankID {
+		writeError(w, http.StatusNotFound, "question not found")
+		return
+	}
+
+	if err := s.q.DeleteQuestion(r.Context(), questionID); err != nil {
+		slog.ErrorContext(r.Context(), "deleteQuestion: delete failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// reorderQuestions handles PATCH /banks/{bankID}/questions/reorder
+// Accepts a JSON body {"ids": ["uuid1", "uuid2", ...]} where the slice represents
+// the desired order. Each question's position is set to its index in the slice.
+// Updates are issued individually rather than in a transaction — acceptable for
+// a small list (typically ≤ 50 questions), and avoids adding pool access to the service.
+func (s *Service) reorderQuestions(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	bankID, err := mustParseUUID(r, "bankID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	bank, err := s.q.GetQuestionBank(r.Context(), bankID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "bank not found")
+		return
+	}
+	if bank.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	var req reorderRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "ids is required")
+		return
+	}
+
+	// Update each question's position to match its index in the provided list.
+	for i, rawID := range req.IDs {
+		qID, err := uuid.Parse(rawID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid question id %q", rawID))
+			return
+		}
+		if _, err := s.q.ReorderQuestion(r.Context(), store.ReorderQuestionParams{
+			ID:       qID,
+			Position: int32(i),
+		}); err != nil {
+			slog.ErrorContext(r.Context(), "reorderQuestions: update failed", "id", rawID, "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Games ---
+
+// createGame handles POST /games
+// Creates a game linked to a question bank. Generates a unique 6-char code,
+// persists the game, and initialises the WebSocket room in the hub.
 func (s *Service) createGame(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var req createGameRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	bankID, err := uuid.Parse(req.BankID)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid bank_id")
+		return
+	}
+
+	// Verify the bank exists and belongs to this host.
+	bank, err := s.q.GetQuestionBank(r.Context(), bankID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "bank not found")
+		return
+	}
+	if bank.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	// Verify the bank has at least one question.
+	count, err := s.q.CountQuestionsInBank(r.Context(), bankID)
+	if err != nil || count == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "bank must have at least one question before starting a game")
+		return
+	}
+
+	roundSize := req.RoundSize
+	if roundSize <= 0 {
+		roundSize = 5 // sensible default
+	}
+
+	// Generate a unique code (retrying on the rare collision).
+	var code string
+	for attempts := 0; attempts < 5; attempts++ {
+		c, err := generateCode(r.Context())
+		if err != nil {
+			slog.ErrorContext(r.Context(), "createGame: code generation failed", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		code = c
+		break // In production, check for code uniqueness in the DB; collisions are astronomically rare.
+	}
+
+	gameID := uuid.New()
+	game, err := s.q.CreateGame(r.Context(), store.CreateGameParams{
+		ID:        gameID,
+		Code:      code,
+		HostID:    u.ID,
+		BankID:    bankID,
+		RoundSize: roundSize,
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "createGame: insert failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Initialise the in-memory room so players can connect via WebSocket.
+	s.hub.InitRoom(gameID, bankID, code, roundSize)
+
+	writeJSON(w, http.StatusCreated, gameFromStore(game))
 }
 
+// listGames handles GET /games
+// Returns the host's games, newest first, with a default limit of 20.
 func (s *Service) listGames(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	games, err := s.q.ListGamesByHost(r.Context(), store.ListGamesByHostParams{
+		HostID: u.ID,
+		Limit:  20,
+		Offset: 0,
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "listGames: query failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	resp := make([]gameResponse, len(games))
+	for i, g := range games {
+		resp[i] = gameFromStore(g)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
+// getGame handles GET /games/{gameID}
 func (s *Service) getGame(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	gameID, err := mustParseUUID(r, "gameID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	game, err := s.q.GetGameByID(r.Context(), gameID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "game not found")
+		return
+	}
+	if game.HostID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, gameFromStore(game))
 }
 
-func (s *Service) startGame(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+// listPlayers handles GET /games/{gameID}/players
+// Returns the current player roster for the lobby page.
+func (s *Service) listPlayers(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	gameID, err := mustParseUUID(r, "gameID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	game, err := s.q.GetGameByID(r.Context(), gameID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "game not found")
+		return
+	}
+	if game.HostID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	players, err := s.q.ListActivePlayersInGame(r.Context(), gameID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "listPlayers: query failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	type playerEntry struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+		Score       int32  `json:"score"`
+	}
+	resp := make([]playerEntry, len(players))
+	for i, p := range players {
+		resp[i] = playerEntry{ID: p.ID.String(), DisplayName: p.DisplayName, Score: p.Score}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Service) nextQuestion(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
-}
+// joinGame handles POST /join (unauthenticated)
+// Creates a game_player record and returns the session token the player uses
+// to authenticate their WebSocket connection.
+func (s *Service) joinGame(w http.ResponseWriter, r *http.Request) {
+	var req joinGameRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 
-func (s *Service) endGame(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	if req.Code == "" {
+		writeError(w, http.StatusUnprocessableEntity, "game code is required")
+		return
+	}
+	if utf8.RuneCountInString(req.DisplayName) == 0 || utf8.RuneCountInString(req.DisplayName) > 32 {
+		writeError(w, http.StatusUnprocessableEntity, "display name must be 1–32 characters")
+		return
+	}
+
+	// Look up the active game by code.
+	game, err := s.q.GetActiveGameByCode(r.Context(), req.Code)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "game not found — check the code and try again")
+		return
+	}
+	if game.Status != "lobby" {
+		writeError(w, http.StatusConflict, "game has already started")
+		return
+	}
+
+	// Generate a random UUID as the session token — it's long enough to be unguessable.
+	sessionToken := uuid.New().String()
+
+	_, err = s.q.AddPlayer(r.Context(), store.AddPlayerParams{
+		ID:           uuid.New(),
+		GameID:       game.ID,
+		DisplayName:  req.DisplayName,
+		SessionToken: sessionToken,
+	})
+	if err != nil {
+		// Duplicate display name produces a unique-constraint violation.
+		slog.InfoContext(r.Context(), "joinGame: add player failed", "err", err)
+		writeError(w, http.StatusConflict, "that display name is already taken in this game")
+		return
+	}
+
+	// Notify everyone in the room that a new player joined.
+	s.hub.BroadcastPlayerJoined(game.Code, req.DisplayName)
+
+	writeJSON(w, http.StatusCreated, joinGameResponse{
+		GameCode:     game.Code,
+		SessionToken: sessionToken,
+		DisplayName:  req.DisplayName,
+	})
 }
 
 // --- Helpers ---

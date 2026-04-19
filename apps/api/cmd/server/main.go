@@ -103,8 +103,8 @@ func main() {
 	queries := store.New(pool)
 	userSvc := user.New(queries)
 	entitlements := billing.NoopChecker{} // always grants access until Stripe is implemented
-	gameSvc := game.New(queries, userSvc, entitlements)
-	hub := realtime.New()
+	hub := realtime.New(queries, cfg.DevAuthToken)
+	gameSvc := game.New(queries, userSvc, entitlements, hub)
 
 	// -------------------------------------------------------------------------
 	// Auth middleware
@@ -140,6 +140,9 @@ func main() {
 	// WebSocket endpoint — intentionally unauthenticated so players can connect
 	// with only a game code and display name (no Auth0 account required).
 	hub.RegisterRoutes(r)
+
+	// Public game routes (no auth required) — players join with only a code.
+	gameSvc.RegisterPublicRoutes(r)
 
 	// Authenticated API routes — the auth middleware runs first for this group,
 	// rejecting any request without a valid Bearer token before it reaches a handler.

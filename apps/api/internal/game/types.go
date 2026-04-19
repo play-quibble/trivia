@@ -1,6 +1,7 @@
 package game
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -59,6 +60,150 @@ func bankFromStore(b store.QuestionBank) bankResponse {
 		resp.Description = &b.Description.String
 	}
 	return resp
+}
+
+// --- Question request/response types ---
+
+// mcChoice is a single option in a multiple-choice question.
+// Correct flags the one right answer; only one choice per question may be true.
+type mcChoice struct {
+	Text    string `json:"text"`
+	Correct bool   `json:"correct"`
+}
+
+// createQuestionRequest is the JSON body expected by POST /banks/{bankID}/questions.
+type createQuestionRequest struct {
+	// Type must be "text" or "multiple_choice".
+	Type   string `json:"type"`
+	Prompt string `json:"prompt"` // question text, enforced ≤ 500 chars in the handler
+	Points int32  `json:"points"` // defaults to 1000 if omitted or ≤ 0
+
+	// AcceptedAnswers is used for text questions — a list of valid responses
+	// (primary spelling first, synonyms/alternates after). At least one is required.
+	AcceptedAnswers []string `json:"accepted_answers"`
+
+	// Choices is used for multiple-choice questions — 2–6 options, exactly one
+	// with Correct: true.
+	Choices []mcChoice `json:"choices"`
+}
+
+// updateQuestionRequest is the JSON body expected by PUT /banks/{bankID}/questions/{questionID}.
+// The position field is intentionally excluded — use PATCH /questions/reorder for ordering.
+type updateQuestionRequest struct {
+	Prompt          string     `json:"prompt"`
+	Points          int32      `json:"points"`
+	AcceptedAnswers []string   `json:"accepted_answers"`
+	Choices         []mcChoice `json:"choices"`
+}
+
+// reorderRequest is the body for PATCH /banks/{bankID}/questions/reorder.
+// IDs lists every question UUID in the desired display order; their positions
+// are updated to match their index in this slice.
+type reorderRequest struct {
+	IDs []string `json:"ids"`
+}
+
+// questionResponse is the clean API shape for a question.
+// Like bankResponse, it avoids pgtype wrappers in the serialised JSON output.
+type questionResponse struct {
+	ID       uuid.UUID `json:"id"`
+	BankID   uuid.UUID `json:"bank_id"`
+	Type     string    `json:"type"`
+	Prompt   string    `json:"prompt"`
+	Points   int32     `json:"points"`
+	Position int32     `json:"position"`
+
+	// Only one of these is populated, determined by Type:
+	AcceptedAnswers []string   `json:"accepted_answers,omitempty"` // text questions
+	Choices         []mcChoice `json:"choices,omitempty"`          // MC questions
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// questionFromStore converts a store.Question into a questionResponse.
+// The choices JSONB field is interpreted differently depending on question type:
+//   - text:             choices contains a JSON string array of accepted answers
+//   - multiple_choice:  choices contains a JSON array of mcChoice objects
+//
+// If choices is absent (legacy rows), we fall back to correct_answer for text type.
+func questionFromStore(q store.Question) questionResponse {
+	resp := questionResponse{
+		ID:        q.ID,
+		BankID:    q.BankID,
+		Type:      string(q.Type),
+		Prompt:    q.Prompt,
+		Points:    q.Points,
+		Position:  q.Position,
+		CreatedAt: q.CreatedAt.Time,
+		UpdatedAt: q.UpdatedAt.Time,
+	}
+
+	if len(q.Choices) > 0 {
+		switch q.Type {
+		case store.QuestionTypeText:
+			var answers []string
+			if err := json.Unmarshal(q.Choices, &answers); err == nil && len(answers) > 0 {
+				resp.AcceptedAnswers = answers
+			}
+		case store.QuestionTypeMultipleChoice:
+			var choices []mcChoice
+			if err := json.Unmarshal(q.Choices, &choices); err == nil {
+				resp.Choices = choices
+			}
+		}
+	}
+
+	// Fallback for text questions that were created before accepted_answers were stored.
+	if q.Type == store.QuestionTypeText && len(resp.AcceptedAnswers) == 0 && q.CorrectAnswer != "" {
+		resp.AcceptedAnswers = []string{q.CorrectAnswer}
+	}
+
+	return resp
+}
+
+// --- Game request/response types ---
+
+// createGameRequest is the body for POST /games.
+type createGameRequest struct {
+	BankID    string `json:"bank_id"`   // UUID of the question bank to use
+	RoundSize int32  `json:"round_size"` // questions per round before a leaderboard; defaults to 5
+}
+
+// joinGameRequest is the body for POST /join (unauthenticated player endpoint).
+type joinGameRequest struct {
+	Code        string `json:"code"`         // 6-character game code
+	DisplayName string `json:"display_name"` // player's chosen name, max 32 chars
+}
+
+// joinGameResponse is returned to the player after a successful join.
+type joinGameResponse struct {
+	GameCode     string `json:"game_code"`
+	SessionToken string `json:"session_token"` // stored by the player; used for WebSocket auth
+	DisplayName  string `json:"display_name"`
+}
+
+// gameResponse is the clean API shape for a game record.
+type gameResponse struct {
+	ID                 uuid.UUID `json:"id"`
+	Code               string    `json:"code"`
+	Status             string    `json:"status"`
+	BankID             uuid.UUID `json:"bank_id"`
+	CurrentQuestionIdx int32     `json:"current_question_idx"`
+	RoundSize          int32     `json:"round_size"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+func gameFromStore(g store.Game) gameResponse {
+	return gameResponse{
+		ID:                 g.ID,
+		Code:               g.Code,
+		Status:             string(g.Status),
+		BankID:             g.BankID,
+		CurrentQuestionIdx: g.CurrentQuestionIdx,
+		RoundSize:          g.RoundSize,
+		CreatedAt:          g.CreatedAt.Time,
+	}
 }
 
 // nullText converts an optional *string into pgtype.Text for use in sqlc queries.

@@ -2,7 +2,7 @@
 
 import { useRef, useTransition } from 'react'
 import type { Bank } from '@/types'
-import { createBankAction } from '@/app/banks/actions'
+import { createBankAction } from '@/app/(host)/banks/actions'
 
 interface CreateBankFormProps {
   onClose: () => void

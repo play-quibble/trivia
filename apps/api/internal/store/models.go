@@ -120,6 +120,8 @@ type Game struct {
 	EndedAt            pgtype.Timestamptz `json:"ended_at"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	// RoundSize is added via migration 0009 — ALTER TABLE appends it last in SELECT *.
+	RoundSize          int32              `json:"round_size"`
 }
 
 type GamePlayer struct {

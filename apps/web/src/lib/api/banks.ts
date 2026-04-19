@@ -70,3 +70,9 @@ export async function updateBank(id: string, name: string, description?: string)
 export async function deleteBank(id: string): Promise<void> {
   await apiFetch(`/banks/${id}`, { method: 'DELETE' })
 }
+
+// getBank fetches a single bank by ID.
+export async function getBank(id: string): Promise<Bank> {
+  const res = await apiFetch(`/banks/${id}`)
+  return res.json()
+}

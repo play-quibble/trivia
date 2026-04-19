@@ -33,7 +33,7 @@ export default function BanksView({ banks: initialBanks }: BanksViewProps) {
   }
 
   return (
-    <div>
+    <main className="mx-auto max-w-5xl px-6 py-10">
       {/* Page header */}
       <div className="mb-8 flex items-center justify-between">
         <div>
@@ -89,6 +89,6 @@ export default function BanksView({ banks: initialBanks }: BanksViewProps) {
           ))}
         </div>
       )}
-    </div>
+    </main>
   )
 }

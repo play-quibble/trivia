@@ -1,8 +1,9 @@
 'use client'
 
+import Link from 'next/link'
 import { useState, useTransition } from 'react'
 import type { Bank } from '@/types'
-import { updateBankAction, deleteBankAction } from '@/app/banks/actions'
+import { updateBankAction, deleteBankAction } from '@/app/(host)/banks/actions'
 
 interface BankCardProps {
   bank: Bank
@@ -125,7 +126,11 @@ export default function BankCard({ bank, onUpdate, onDelete }: BankCardProps) {
 
       <div className="flex flex-1 flex-col p-5">
         <div className="mb-4 flex-1">
-          <h3 className="text-base font-semibold text-gray-900">{bank.name}</h3>
+          <Link href={`/banks/${bank.id}`} className="group/name">
+            <h3 className="text-base font-semibold text-gray-900 group-hover/name:text-brand-blue">
+              {bank.name}
+            </h3>
+          </Link>
           {bank.description ? (
             <p className="mt-1 text-sm text-gray-500">{bank.description}</p>
           ) : (
@@ -137,6 +142,12 @@ export default function BankCard({ bank, onUpdate, onDelete }: BankCardProps) {
           <span className="text-xs text-gray-400">Created {formatDate(bank.created_at)}</span>
 
           <div className="flex gap-1">
+            <Link
+              href={`/banks/${bank.id}`}
+              className="rounded-lg px-2.5 py-1 text-xs font-medium text-brand-blue/80 hover:bg-blue-50 hover:text-brand-blue"
+            >
+              Open →
+            </Link>
             <button
               onClick={() => setIsRenaming(true)}
               disabled={isPending}
