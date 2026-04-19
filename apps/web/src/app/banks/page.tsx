@@ -1,21 +1,14 @@
 // Banks page — server component.
-// Because this is a server component (no 'use client' directive), it runs only
-// on the server. It can be async and call the data layer directly — no useEffect,
-// no loading spinner for the initial render. The result is streamed to the browser
-// as HTML before any JavaScript runs.
-import { getSession } from '@/lib/session'
-import { listBanks } from '@/lib/mock/banks'
+// Fetches the initial bank list from the real Go API on the server,
+// then hands it to the client component that handles interactivity.
+import { listBanks } from '@/lib/api/banks'
 import BanksView from '@/components/BanksView'
 
-export const metadata = { title: 'Question Banks — Trivia' }
+export const metadata = { title: 'Question Banks — Quibble' }
 
 export default async function BanksPage() {
-  const session = getSession()
-  // Fetch banks on the server — no network round-trip from the browser.
-  // When auth is real, getSession() will read an encrypted cookie and listBanks()
-  // will call the Go API with a Bearer token, all server-side.
-  const banks = await listBanks(session.userId)
-
-  // Pass the data down to the client component that handles interactivity.
+  // listBanks calls the Go API with the DEV_AUTH_TOKEN from the environment.
+  // The API derives the owner from the token, so no user ID is passed explicitly.
+  const banks = await listBanks()
   return <BanksView banks={banks} />
 }

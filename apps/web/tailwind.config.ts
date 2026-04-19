@@ -16,6 +16,11 @@ const config: Config = {
           red: '#C60C30',
         },
       },
+      fontFamily: {
+        // Consumed via CSS variable set by next/font in layout.tsx.
+        // Use with className="font-display" anywhere in the app.
+        display: ['var(--font-display)'],
+      },
     },
   },
   plugins: [],

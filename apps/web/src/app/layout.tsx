@@ -1,15 +1,23 @@
-// Root layout — wraps every page in the app.
-// In Next.js App Router, layout.tsx at the app/ root is the outermost shell:
-// it renders once and persists across navigations (the children swap out,
-// the layout stays mounted). This is where global styles, fonts, and shared
-// UI like the navbar live.
 import type { Metadata } from 'next'
+import { Fredoka } from 'next/font/google'
 import './globals.css'
 import Navbar from '@/components/Navbar'
 import { getSession } from '@/lib/session'
 
+// next/font/google downloads and self-hosts the font at build time.
+// No external request is made by the browser — better performance and privacy
+// than a <link> tag pointing at fonts.googleapis.com.
+//
+// variable: '--font-display' injects a CSS custom property onto the <html>
+// element so Tailwind's font-display utility class can reference it.
+const fredoka = Fredoka({
+  subsets: ['latin'],
+  weight: ['400', '600'],
+  variable: '--font-display',
+})
+
 export const metadata: Metadata = {
-  title: 'Trivia',
+  title: 'Quibble',
   description: 'Host live trivia games',
 }
 
@@ -17,10 +25,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const session = getSession()
 
   return (
-    <html lang="en">
+    // fredoka.variable attaches --font-display to the <html> element so every
+    // descendant can use font-display via Tailwind.
+    <html lang="en" className={fredoka.variable}>
       <body className="min-h-screen bg-gray-50 text-gray-900 antialiased">
         <Navbar session={session} />
-        {/* Main content area — each page renders into {children} */}
         <main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
       </body>
     </html>

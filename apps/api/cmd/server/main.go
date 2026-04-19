@@ -84,10 +84,15 @@ func main() {
 	defer rdb.Close()
 
 	if _, err := rdb.Ping(ctx).Result(); err != nil {
-		slog.Error("redis ping failed", "err", err)
-		os.Exit(1)
+		// Redis is required for live game state (leaderboards, real-time rooms),
+		// but none of those features are implemented yet. Log a warning and
+		// continue so the server is usable for the bank/question API during
+		// local development without a running Redis instance.
+		// TODO: change this back to os.Exit(1) once WebSocket game flow is wired up.
+		slog.Warn("redis unavailable — live game features will not work", "err", err)
+	} else {
+		slog.Info("redis connected")
 	}
-	slog.Info("redis connected")
 
 	// -------------------------------------------------------------------------
 	// Services
@@ -106,7 +111,7 @@ func main() {
 	// -------------------------------------------------------------------------
 	// This validates Auth0 JWTs on every authenticated route.
 	// It's created once here and reused across all requests.
-	authMiddleware := auth.New(cfg.Auth0Domain, cfg.Auth0Audience)
+	authMiddleware := auth.New(cfg.Auth0Domain, cfg.Auth0Audience, cfg.DevAuthToken)
 
 	// -------------------------------------------------------------------------
 	// Router
