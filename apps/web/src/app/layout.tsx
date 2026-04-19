@@ -28,9 +28,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // fredoka.variable attaches --font-display to the <html> element so every
     // descendant can use font-display via Tailwind.
     <html lang="en" className={fredoka.variable}>
-      <body className="min-h-screen bg-gray-50 text-gray-900 antialiased">
+      <body className="min-h-screen bg-slate-100 text-gray-900 antialiased">
         <Navbar session={session} />
-        <main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
+        <main className="mx-auto max-w-5xl px-6 py-10">{children}</main>
       </body>
     </html>
   )

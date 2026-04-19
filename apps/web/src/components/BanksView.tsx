@@ -35,9 +35,9 @@ export default function BanksView({ banks: initialBanks }: BanksViewProps) {
   return (
     <div>
       {/* Page header */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-8 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Question Banks</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">Question Banks</h1>
           <p className="mt-1 text-sm text-gray-500">
             Reusable sets of questions you can attach to a game.
           </p>
@@ -46,7 +46,7 @@ export default function BanksView({ banks: initialBanks }: BanksViewProps) {
         <button
           onClick={() => setShowCreateForm(true)}
           disabled={showCreateForm}
-          className="rounded-md bg-brand-blue px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          className="rounded-lg bg-brand-blue px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90 disabled:opacity-50"
         >
           + New Bank
         </button>
@@ -65,20 +65,20 @@ export default function BanksView({ banks: initialBanks }: BanksViewProps) {
 
       {/* Bank grid */}
       {banks.length === 0 && !showCreateForm ? (
-        <div className="rounded-lg border border-dashed border-gray-300 py-16 text-center">
+        <div className="rounded-xl border border-dashed border-gray-300 bg-white/60 py-20 text-center">
           <p className="text-sm font-medium text-gray-500">No question banks yet.</p>
           <p className="mt-1 text-sm text-gray-400">
             Create one to start building questions.
           </p>
           <button
             onClick={() => setShowCreateForm(true)}
-            className="mt-4 rounded-md bg-brand-blue px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+            className="mt-5 rounded-lg bg-brand-blue px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90"
           >
             Create your first bank
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {banks.map((bank) => (
             <BankCard
               key={bank.id}
