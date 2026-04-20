@@ -108,8 +108,12 @@ function QuizCard({ quiz, onDelete }: { quiz: Quiz; onDelete: () => void }) {
   function handleDelete() {
     if (!confirm(`Delete quiz "${quiz.name}"? This cannot be undone.`)) return
     startDelete(async () => {
-      await deleteQuizAction(quiz.id)
-      onDelete()
+      const result = await deleteQuizAction(quiz.id)
+      if (result.success) {
+        onDelete()
+      } else {
+        alert(result.error ?? 'Failed to delete quiz.')
+      }
     })
   }
 

@@ -20,7 +20,15 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
 
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    throw new Error(`API ${options.method ?? 'GET'} ${path} → ${res.status}: ${body}`)
+    let message = `API ${options.method ?? 'GET'} ${path} → ${res.status}`
+    try {
+      const json = JSON.parse(body)
+      if (json?.error) message = json.error
+    } catch {
+      // not JSON — keep the raw body for debugging
+      if (body) message = body
+    }
+    throw new Error(message)
   }
 
   return res

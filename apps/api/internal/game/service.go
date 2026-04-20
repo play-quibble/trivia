@@ -1026,6 +1026,17 @@ func (s *Service) deleteQuiz(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
+	// Block deletion if any games have been run from this quiz.
+	gameCount, err := s.q.CountGamesByQuiz(r.Context(), quizID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "deleteQuiz: count games failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if gameCount > 0 {
+		writeError(w, http.StatusConflict, "quiz has associated games and cannot be deleted")
+		return
+	}
 	if err := s.q.DeleteQuiz(r.Context(), quizID); err != nil {
 		slog.ErrorContext(r.Context(), "deleteQuiz: delete failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

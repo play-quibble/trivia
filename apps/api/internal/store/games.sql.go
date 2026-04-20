@@ -183,6 +183,14 @@ func (q *Queries) ListGamesByHost(ctx context.Context, arg ListGamesByHostParams
 	return items, nil
 }
 
+const countGamesByQuiz = `SELECT COUNT(*) FROM games WHERE quiz_id = $1`
+
+func (q *Queries) CountGamesByQuiz(ctx context.Context, quizID uuid.UUID) (int64, error) {
+	var n int64
+	err := q.db.QueryRow(ctx, countGamesByQuiz, quizID).Scan(&n)
+	return n, err
+}
+
 const startGame = `-- name: StartGame :one
 UPDATE games
 SET status     = 'in_progress',

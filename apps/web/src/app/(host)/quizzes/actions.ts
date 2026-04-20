@@ -1,6 +1,7 @@
 'use server'
 
 import { redirect } from 'next/navigation'
+import { revalidatePath } from 'next/cache'
 import * as quizzesApi from '@/lib/api/quizzes'
 import * as gamesApi from '@/lib/api/games'
 import { listQuestions } from '@/lib/api/questions'
@@ -30,13 +31,14 @@ export async function createQuizAction(formData: FormData): Promise<{ error?: st
   redirect(`/quizzes/${quiz.id}`)
 }
 
-export async function deleteQuizAction(quizID: string): Promise<{ error?: string }> {
+export async function deleteQuizAction(quizID: string): Promise<{ success?: boolean; error?: string }> {
   try {
     await quizzesApi.deleteQuiz(quizID)
+    revalidatePath('/quizzes')
+    return { success: true }
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'Failed to delete quiz' }
   }
-  redirect('/quizzes')
 }
 
 export async function createRoundAction(quizID: string, title?: string): Promise<{ error?: string }> {
