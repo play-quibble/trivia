@@ -56,3 +56,8 @@ export async function listPlayers(gameID: string): Promise<GamePlayer[]> {
   const res = await apiFetch(`/games/${gameID}/players`)
   return res.json()
 }
+
+// cancelGame transitions a lobby or in-progress game to 'cancelled'.
+export async function cancelGame(gameID: string): Promise<void> {
+  await apiFetch(`/games/${gameID}`, { method: 'DELETE' })
+}

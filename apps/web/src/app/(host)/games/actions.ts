@@ -5,6 +5,17 @@ import { revalidatePath } from 'next/cache'
 import * as gamesApi from '@/lib/api/games'
 import type { Game } from '@/types'
 
+export async function cancelGameAction(gameID: string): Promise<{ success?: boolean; error?: string }> {
+  try {
+    await gamesApi.cancelGame(gameID)
+    revalidatePath('/games')
+    return { success: true }
+  } catch (err) {
+    console.error('cancelGameAction failed:', err)
+    return { error: err instanceof Error ? err.message : 'Failed to cancel game' }
+  }
+}
+
 // createGameAction creates a new game linked to a quiz and redirects the host to the host panel.
 export async function createGameAction(
   formData: FormData,

@@ -111,6 +111,7 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 		r.Route("/{gameID}", func(r chi.Router) {
 			r.Get("/", s.getGame)
 			r.Get("/players", s.listPlayers)
+			r.Delete("/", s.cancelGame)
 		})
 	})
 }
@@ -1266,6 +1267,41 @@ func (s *Service) getGame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, gameFromStore(game))
+}
+
+// cancelGame handles DELETE /games/{gameID}
+// Transitions the game to 'cancelled' status. Only works on lobby or in_progress games.
+func (s *Service) cancelGame(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	gameID, err := mustParseUUID(r, "gameID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	game, err := s.q.GetGameByID(r.Context(), gameID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "game not found")
+		return
+	}
+	if game.HostID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	if _, err := s.q.CancelGame(r.Context(), gameID); err != nil {
+		// CancelGame only matches lobby/in_progress rows — no rows updated means
+		// the game was already completed or cancelled.
+		writeError(w, http.StatusConflict, "game cannot be cancelled in its current state")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // listPlayers handles GET /games/{gameID}/players

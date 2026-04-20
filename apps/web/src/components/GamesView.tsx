@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react'
 import Link from 'next/link'
 import type { Game, Quiz } from '@/types'
-import { createGameAction } from '@/app/(host)/games/actions'
+import { createGameAction, cancelGameAction } from '@/app/(host)/games/actions'
 
 interface Props {
   games: Game[]
@@ -25,6 +25,7 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 export default function GamesView({ games: initial, quizzes }: Props) {
+  const [games, setGames] = useState<Game[]>(initial)
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -35,6 +36,18 @@ export default function GamesView({ games: initial, quizzes }: Props) {
       const result = await createGameAction(formData)
       if (result?.error) setError(result.error)
       // On success, createGameAction redirects — no local state update needed.
+    })
+  }
+
+  function handleCancel(gameID: string) {
+    if (!confirm('Cancel this game? Players will be disconnected.')) return
+    startTransition(async () => {
+      const result = await cancelGameAction(gameID)
+      if (result.success) {
+        setGames(prev => prev.map(g => g.id === gameID ? { ...g, status: 'cancelled' } : g))
+      } else {
+        alert(result.error ?? 'Failed to cancel game')
+      }
     })
   }
 
@@ -114,13 +127,13 @@ export default function GamesView({ games: initial, quizzes }: Props) {
       )}
 
       {/* Games list */}
-      {initial.length === 0 && !showForm ? (
+      {games.length === 0 && !showForm ? (
         <div className="overflow-hidden rounded-xl border border-dashed border-gray-200 bg-white/60 px-8 py-12 text-center text-slate-400">
           No games yet. Create one to get started.
         </div>
       ) : (
         <div className="space-y-3">
-          {initial.map((g) => (
+          {games.map((g) => (
             <div
               key={g.id}
               className="flex items-center justify-between overflow-hidden rounded-xl border border-gray-100 bg-white px-5 py-4 shadow-sm"
@@ -141,12 +154,21 @@ export default function GamesView({ games: initial, quizzes }: Props) {
                   {new Date(g.created_at).toLocaleDateString()}
                 </span>
                 {(g.status === 'lobby' || g.status === 'in_progress') && (
-                  <Link
-                    href={`/games/${g.id}/host`}
-                    className="rounded-lg bg-brand-blue px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-blue/90 transition-colors"
-                  >
-                    Open Host Panel
-                  </Link>
+                  <>
+                    <Link
+                      href={`/games/${g.id}/host`}
+                      className="rounded-lg bg-brand-blue px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-blue/90 transition-colors"
+                    >
+                      Open Host Panel
+                    </Link>
+                    <button
+                      onClick={() => handleCancel(g.id)}
+                      disabled={isPending}
+                      className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-slate-500 hover:border-brand-red/40 hover:text-brand-red disabled:opacity-40 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </>
                 )}
               </div>
             </div>
