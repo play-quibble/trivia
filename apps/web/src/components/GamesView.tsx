@@ -140,7 +140,7 @@ export default function GamesView({ games: initial, quizzes }: Props) {
             >
               <div className="flex items-center gap-4">
                 {/* Game code */}
-                <span className="font-display text-lg font-semibold tracking-widest text-brand-blue">
+                <span className="inline-block w-28 shrink-0 font-display text-lg font-semibold tracking-widest text-brand-blue">
                   {g.code}
                 </span>
                 {/* Status badge */}
