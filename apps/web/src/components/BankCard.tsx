@@ -144,7 +144,7 @@ export default function BankCard({ bank, onUpdate, onDelete }: BankCardProps) {
           <div className="flex gap-1">
             <Link
               href={`/banks/${bank.id}`}
-              className="rounded-lg px-2.5 py-1 text-xs font-medium text-brand-blue/80 hover:bg-blue-50 hover:text-brand-blue"
+              className="whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-medium text-brand-blue/80 hover:bg-blue-50 hover:text-brand-blue"
             >
               Open →
             </Link>
