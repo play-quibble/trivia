@@ -71,6 +71,13 @@ export default function PlayerGame({ code, wsBase }: Props) {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const [isFinal, setIsFinal] = useState(false)
 
+  // Keep a stable ref to the latest textInputs so handleMessage can read the
+  // current value without being listed as a dependency. This prevents the
+  // WebSocket effect from re-running (and tearing down the connection) every
+  // time the player types a character.
+  const textInputsRef = useRef(textInputs)
+  useEffect(() => { textInputsRef.current = textInputs }, [textInputs])
+
   const handleMessage = useCallback((raw: string) => {
     let msg: { type: string; payload?: unknown }
     try { msg = JSON.parse(raw) } catch { return }
@@ -113,7 +120,7 @@ export default function PlayerGame({ code, wsBase }: Props) {
           // undefined shows the neutral "submitted" state until round_scores arrives.
           setActiveQuestions(prev =>
             prev.map(q => q.id === p.question_id
-              ? { ...q, submittedAnswer: textInputs[q.id] ?? q.submittedAnswer }
+              ? { ...q, submittedAnswer: textInputsRef.current[q.id] ?? q.submittedAnswer }
               : q
             )
           )
@@ -157,7 +164,12 @@ export default function PlayerGame({ code, wsBase }: Props) {
         break
       }
     }
-  }, [textInputs])
+  }, []) // stable — reads textInputs via ref, so no dependency needed
+
+  // Keep a ref to the latest handleMessage so the WebSocket effect never needs
+  // to re-run just because the handler was recreated.
+  const handleMessageRef = useRef(handleMessage)
+  useEffect(() => { handleMessageRef.current = handleMessage }, [handleMessage])
 
   useEffect(() => {
     const sessionToken = sessionStorage.getItem(`quibble_session_${code}`)
@@ -171,14 +183,14 @@ export default function PlayerGame({ code, wsBase }: Props) {
     wsRef.current = ws
 
     ws.onopen = () => setPhase('lobby')
-    ws.onmessage = (e) => handleMessage(e.data)
+    ws.onmessage = (e) => handleMessageRef.current(e.data)
     ws.onerror = () => {
       setErrorMsg('Connection failed — the game may have ended or the code is wrong.')
       setPhase('error')
     }
 
     return () => ws.close()
-  }, [wsBase, code, handleMessage])
+  }, [wsBase, code]) // WebSocket only reconnects if the game code or server URL changes
 
   // ---- submit helpers -----------------------------------------------------
 
