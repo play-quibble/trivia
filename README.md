@@ -10,7 +10,7 @@ A self-hosted Kubernetes trivia platform where hosts create and run live quiz se
 
 1. **Create a question bank** — a reusable library of questions. Each question is either a text answer (accepts a list of valid spellings) or multiple choice (2–6 options, one marked correct). Questions are assigned point values and can be reordered.
 
-2. **Build a quiz** — a quiz is a curated programme of rounds. Add rounds in order, then open each round's question picker to choose questions from any of your banks. Questions within a round can be reordered with the up/down controls.
+2. **Build a quiz** — a quiz is a curated program of rounds. Add rounds in order, then open each round's question picker to choose questions from any of your banks. Questions within a round can be reordered with the up/down controls.
 
 ### Running a game
 
@@ -97,7 +97,7 @@ trivia/
 - `users` — host accounts, keyed by Auth0 `sub`
 - `question_banks` — reusable question libraries owned by a host
 - `questions` — belongs to a bank; `text` or `multiple_choice` type; choices and accepted answers stored as JSONB
-- `quizzes` — a host-curated programme of rounds; one quiz can be played multiple times
+- `quizzes` — a host-curated program of rounds; one quiz can be played multiple times
 - `quiz_rounds` — ordered rounds within a quiz, each with an optional title
 - `quiz_round_questions` — ordered join table linking questions to a round; position is explicit so hosts can reorder
 - `games` — a live play instance; linked to a quiz (or a legacy bank); holds a 6-char join code, status, and round/question index
