@@ -33,11 +33,14 @@ export async function listGames(): Promise<Game[]> {
   return res.json()
 }
 
-// createGame creates a new game linked to a question bank.
-export async function createGame(bankID: string, roundSize: number): Promise<Game> {
+// createGame creates a new game linked to a quiz (preferred) or bank (legacy).
+export async function createGame(opts: { quizID?: string; bankID?: string; roundSize?: number }): Promise<Game> {
+  const body: Record<string, unknown> = {}
+  if (opts.quizID) body.quiz_id = opts.quizID
+  if (opts.bankID) { body.bank_id = opts.bankID; body.round_size = opts.roundSize ?? 5 }
   const res = await apiFetch('/games', {
     method: 'POST',
-    body: JSON.stringify({ bank_id: bankID, round_size: roundSize }),
+    body: JSON.stringify(body),
   })
   return res.json()
 }

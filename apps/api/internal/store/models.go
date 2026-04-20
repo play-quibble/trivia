@@ -114,14 +114,51 @@ type Game struct {
 	Code               string             `json:"code"`
 	Status             GameStatus         `json:"status"`
 	HostID             uuid.UUID          `json:"host_id"`
-	BankID             uuid.UUID          `json:"bank_id"`
+	BankID             pgtype.UUID        `json:"bank_id"`             // nullable: zero-value for quiz-based games
 	CurrentQuestionIdx int32              `json:"current_question_idx"`
 	StartedAt          pgtype.Timestamptz `json:"started_at"`
 	EndedAt            pgtype.Timestamptz `json:"ended_at"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-	// RoundSize is added via migration 0009 — ALTER TABLE appends it last in SELECT *.
+	// Added via migration 0009.
 	RoundSize          int32              `json:"round_size"`
+	// Added via migration 0011.
+	QuizID             pgtype.UUID        `json:"quiz_id"`             // nullable UUID
+	CurrentRoundIdx    int32              `json:"current_round_idx"`
+}
+
+// Quiz is a host-curated set of rounds.
+type Quiz struct {
+	ID          uuid.UUID          `json:"id"`
+	OwnerID     uuid.UUID          `json:"owner_id"`
+	Name        string             `json:"name"`
+	Description pgtype.Text        `json:"description"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+// QuizRound is one round within a Quiz.
+type QuizRound struct {
+	ID          uuid.UUID          `json:"id"`
+	QuizID      uuid.UUID          `json:"quiz_id"`
+	RoundNumber int32              `json:"round_number"`
+	Title       pgtype.Text        `json:"title"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+// QuizRoundQuestion links a Question to a QuizRound at a given position.
+type QuizRoundQuestion struct {
+	RoundID    uuid.UUID `json:"round_id"`
+	QuestionID uuid.UUID `json:"question_id"`
+	Position   int32     `json:"position"`
+}
+
+// RoundWithQuestions is a convenience type used by the hub to load all
+// questions for a round in one structure.
+type RoundWithQuestions struct {
+	Round     QuizRound
+	Questions []Question
 }
 
 type GamePlayer struct {

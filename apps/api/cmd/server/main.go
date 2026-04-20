@@ -125,6 +125,7 @@ func main() {
 	r.Use(middleware.Logger)     // logs each request: method, path, status, duration
 	r.Use(middleware.Recoverer)  // catches panics and returns 500 instead of crashing the server
 	r.Use(middleware.Timeout(30 * time.Second)) // cancels slow requests after 30s
+	r.Use(corsMiddleware) // allows browser fetch from the Next.js dev server
 
 	// Health and readiness probes — used by Kubernetes to decide whether to
 	// send traffic to this pod. Both check Postgres and Redis connectivity.
@@ -197,6 +198,32 @@ func main() {
 		slog.Error("graceful shutdown failed", "err", err)
 	}
 	slog.Info("server stopped")
+}
+
+// corsMiddleware adds the headers browsers need for cross-origin requests.
+// During local development the Next.js dev server (localhost:3000) makes fetch
+// calls and WebSocket upgrades to the Go API (localhost:8080), which the browser
+// treats as cross-origin. Without these headers the browser blocks the request
+// before it reaches any handler.
+//
+// In production this middleware should be replaced with one that restricts
+// the allowed origin to the actual frontend domain instead of "*".
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		// Browsers send a preflight OPTIONS request before cross-origin POST/PUT/DELETE
+		// requests with custom headers. We reply immediately with 204 No Content so
+		// the browser proceeds with the real request.
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // healthz returns an HTTP handler that checks both Postgres and Redis

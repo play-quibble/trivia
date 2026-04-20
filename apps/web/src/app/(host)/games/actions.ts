@@ -5,23 +5,20 @@ import { revalidatePath } from 'next/cache'
 import * as gamesApi from '@/lib/api/games'
 import type { Game } from '@/types'
 
-// createGameAction creates a new game and redirects the host to the host panel.
+// createGameAction creates a new game linked to a quiz and redirects the host to the host panel.
 export async function createGameAction(
   formData: FormData,
 ): Promise<{ error?: string }> {
-  const bankID = formData.get('bank_id') as string | null
-  const roundSizeRaw = formData.get('round_size') as string | null
-  const roundSize = parseInt(roundSizeRaw ?? '5', 10)
+  const quizID = formData.get('quiz_id') as string | null
 
-  if (!bankID) return { error: 'A question bank is required' }
-  if (isNaN(roundSize) || roundSize < 1) return { error: 'Round size must be at least 1' }
+  if (!quizID) return { error: 'A quiz is required' }
 
   let game: Game
   try {
-    game = await gamesApi.createGame(bankID, roundSize)
+    game = await gamesApi.createGame({ quizID })
   } catch (err) {
     console.error('createGameAction failed:', err)
-    return { error: 'Failed to create game — make sure the bank has at least one question' }
+    return { error: 'Failed to create game — make sure the quiz has at least one round with questions' }
   }
 
   revalidatePath('/games')

@@ -18,6 +18,9 @@ export default function Navbar({ session }: NavbarProps) {
           <Link href="/banks" className="text-sm text-white/70 hover:text-white">
             Banks
           </Link>
+          <Link href="/quizzes" className="text-sm text-white/70 hover:text-white">
+            Quizzes
+          </Link>
           <Link href="/games" className="text-sm text-white/70 hover:text-white">
             Games
           </Link>

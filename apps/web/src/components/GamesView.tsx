@@ -2,12 +2,12 @@
 
 import { useState, useTransition } from 'react'
 import Link from 'next/link'
-import type { Game, Bank } from '@/types'
+import type { Game, Quiz } from '@/types'
 import { createGameAction } from '@/app/(host)/games/actions'
 
 interface Props {
   games: Game[]
-  banks: Bank[]
+  quizzes: Quiz[]
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -24,7 +24,7 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled:   'bg-red-100 text-red-500',
 }
 
-export default function GamesView({ games: initial, banks }: Props) {
+export default function GamesView({ games: initial, quizzes }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -44,7 +44,7 @@ export default function GamesView({ games: initial, banks }: Props) {
       {/* Page header */}
       <div className="mb-8 flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-slate-800">Games</h1>
-        {banks.length > 0 && (
+        {quizzes.length > 0 && (
           <button
             onClick={() => setShowForm((v) => !v)}
             className="rounded-lg bg-brand-blue px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-blue/90 transition-colors"
@@ -54,12 +54,12 @@ export default function GamesView({ games: initial, banks }: Props) {
         )}
       </div>
 
-      {/* No banks warning */}
-      {banks.length === 0 && (
+      {/* No quizzes warning */}
+      {quizzes.length === 0 && (
         <div className="mb-6 overflow-hidden rounded-xl border border-amber-100 bg-amber-50 px-6 py-4 text-sm text-amber-700">
-          You need at least one question bank with questions before you can start a game.{' '}
-          <Link href="/banks" className="font-medium underline">
-            Create a bank →
+          You need at least one quiz with questions before you can start a game.{' '}
+          <Link href="/quizzes" className="font-medium underline">
+            Create a quiz →
           </Link>
         </div>
       )}
@@ -76,33 +76,23 @@ export default function GamesView({ games: initial, banks }: Props) {
 
             <div className="space-y-1">
               <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-                Question Bank
+                Quiz
               </label>
               <select
-                name="bank_id"
+                name="quiz_id"
                 required
                 className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
               >
-                {banks.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
+                {quizzes.map((q) => (
+                  <option key={q.id} value={q.id}>{q.name}</option>
                 ))}
               </select>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-                Questions Per Round
-              </label>
-              <input
-                type="number"
-                name="round_size"
-                min={1}
-                max={50}
-                defaultValue={5}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
-              />
               <p className="text-xs text-slate-400">
-                A leaderboard is shown after every N questions.
+                The quiz defines the rounds and questions. You can{' '}
+                <Link href="/quizzes" className="text-brand-blue hover:underline">
+                  manage quizzes here
+                </Link>
+                .
               </p>
             </div>
 

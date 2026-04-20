@@ -162,12 +162,90 @@ func questionFromStore(q store.Question) questionResponse {
 	return resp
 }
 
+// --- Quiz request/response types ---
+
+type createQuizRequest struct {
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+}
+
+type updateQuizRequest struct {
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+}
+
+type createRoundRequest struct {
+	Title *string `json:"title"`
+}
+
+type updateRoundRequest struct {
+	Title *string `json:"title"`
+}
+
+type setRoundQuestionsRequest struct {
+	// Ordered list of question UUIDs for this round.
+	QuestionIDs []string `json:"question_ids"`
+}
+
+type quizResponse struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerID     uuid.UUID `json:"owner_id"`
+	Name        string    `json:"name"`
+	Description *string   `json:"description,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func quizFromStore(q store.Quiz) quizResponse {
+	resp := quizResponse{
+		ID:        q.ID,
+		OwnerID:   q.OwnerID,
+		Name:      q.Name,
+		CreatedAt: q.CreatedAt.Time,
+		UpdatedAt: q.UpdatedAt.Time,
+	}
+	if q.Description.Valid {
+		resp.Description = &q.Description.String
+	}
+	return resp
+}
+
+type roundResponse struct {
+	ID          uuid.UUID          `json:"id"`
+	QuizID      uuid.UUID          `json:"quiz_id"`
+	RoundNumber int32              `json:"round_number"`
+	Title       *string            `json:"title,omitempty"`
+	Questions   []questionResponse `json:"questions"`
+	CreatedAt   time.Time          `json:"created_at"`
+}
+
+func roundFromStore(r store.QuizRound, questions []questionResponse) roundResponse {
+	resp := roundResponse{
+		ID:          r.ID,
+		QuizID:      r.QuizID,
+		RoundNumber: r.RoundNumber,
+		Questions:   questions,
+		CreatedAt:   r.CreatedAt.Time,
+	}
+	if r.Title.Valid {
+		resp.Title = &r.Title.String
+	}
+	return resp
+}
+
+type quizDetailResponse struct {
+	quizResponse
+	Rounds []roundResponse `json:"rounds"`
+}
+
 // --- Game request/response types ---
 
 // createGameRequest is the body for POST /games.
+// Either bank_id (legacy) or quiz_id must be provided.
 type createGameRequest struct {
-	BankID    string `json:"bank_id"`   // UUID of the question bank to use
-	RoundSize int32  `json:"round_size"` // questions per round before a leaderboard; defaults to 5
+	BankID    string `json:"bank_id"`    // legacy: UUID of a question bank
+	RoundSize int32  `json:"round_size"` // legacy: questions per round
+	QuizID    string `json:"quiz_id"`    // new: UUID of a quiz
 }
 
 // joinGameRequest is the body for POST /join (unauthenticated player endpoint).
@@ -185,25 +263,36 @@ type joinGameResponse struct {
 
 // gameResponse is the clean API shape for a game record.
 type gameResponse struct {
-	ID                 uuid.UUID `json:"id"`
-	Code               string    `json:"code"`
-	Status             string    `json:"status"`
-	BankID             uuid.UUID `json:"bank_id"`
-	CurrentQuestionIdx int32     `json:"current_question_idx"`
-	RoundSize          int32     `json:"round_size"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID                 uuid.UUID  `json:"id"`
+	Code               string     `json:"code"`
+	Status             string     `json:"status"`
+	BankID             *uuid.UUID `json:"bank_id,omitempty"`
+	QuizID             *uuid.UUID `json:"quiz_id,omitempty"`
+	CurrentQuestionIdx int32      `json:"current_question_idx"`
+	CurrentRoundIdx    int32      `json:"current_round_idx"`
+	RoundSize          int32      `json:"round_size"`
+	CreatedAt          time.Time  `json:"created_at"`
 }
 
 func gameFromStore(g store.Game) gameResponse {
-	return gameResponse{
+	resp := gameResponse{
 		ID:                 g.ID,
 		Code:               g.Code,
 		Status:             string(g.Status),
-		BankID:             g.BankID,
 		CurrentQuestionIdx: g.CurrentQuestionIdx,
+		CurrentRoundIdx:    g.CurrentRoundIdx,
 		RoundSize:          g.RoundSize,
 		CreatedAt:          g.CreatedAt.Time,
 	}
+	if g.BankID.Valid {
+		id := uuid.UUID(g.BankID.Bytes)
+		resp.BankID = &id
+	}
+	if g.QuizID.Valid {
+		id := uuid.UUID(g.QuizID.Bytes)
+		resp.QuizID = &id
+	}
+	return resp
 }
 
 // nullText converts an optional *string into pgtype.Text for use in sqlc queries.

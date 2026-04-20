@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/benbotsford/trivia/internal/auth"
 	"github.com/benbotsford/trivia/internal/billing"
@@ -76,13 +77,29 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 			r.Route("/questions", func(r chi.Router) {
 				r.Get("/", s.listQuestions)
 				r.Post("/", s.createQuestion)
-				// /reorder must be registered before /{questionID} so Chi matches
-				// the literal segment first rather than treating "reorder" as a UUID.
 				r.Patch("/reorder", s.reorderQuestions)
 				r.Route("/{questionID}", func(r chi.Router) {
 					r.Get("/", s.getQuestion)
 					r.Put("/", s.updateQuestion)
 					r.Delete("/", s.deleteQuestion)
+				})
+			})
+		})
+	})
+
+	r.Route("/quizzes", func(r chi.Router) {
+		r.Get("/", s.listQuizzes)
+		r.Post("/", s.createQuiz)
+		r.Route("/{quizID}", func(r chi.Router) {
+			r.Get("/", s.getQuiz)
+			r.Put("/", s.updateQuiz)
+			r.Delete("/", s.deleteQuiz)
+			r.Route("/rounds", func(r chi.Router) {
+				r.Post("/", s.createRound)
+				r.Route("/{roundID}", func(r chi.Router) {
+					r.Put("/", s.updateRound)
+					r.Delete("/", s.deleteRound)
+					r.Put("/questions", s.setRoundQuestions)
 				})
 			})
 		})
@@ -751,8 +768,9 @@ func (s *Service) reorderQuestions(w http.ResponseWriter, r *http.Request) {
 // --- Games ---
 
 // createGame handles POST /games
-// Creates a game linked to a question bank. Generates a unique 6-char code,
-// persists the game, and initialises the WebSocket room in the hub.
+// Supports two modes:
+//   - Quiz-based (new): provide quiz_id — questions come from the quiz's rounds
+//   - Bank-based (legacy): provide bank_id + optional round_size
 func (s *Service) createGame(w http.ResponseWriter, r *http.Request) {
 	u, err := s.currentUser(r.Context())
 	if err != nil {
@@ -766,46 +784,74 @@ func (s *Service) createGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bankID, err := uuid.Parse(req.BankID)
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "invalid bank_id")
-		return
-	}
+	var quizID uuid.UUID
+	var bankID uuid.UUID
+	var roundSize int32
 
-	// Verify the bank exists and belongs to this host.
-	bank, err := s.q.GetQuestionBank(r.Context(), bankID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "bank not found")
-		return
-	}
-	if bank.OwnerID != u.ID {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-
-	// Verify the bank has at least one question.
-	count, err := s.q.CountQuestionsInBank(r.Context(), bankID)
-	if err != nil || count == 0 {
-		writeError(w, http.StatusUnprocessableEntity, "bank must have at least one question before starting a game")
-		return
-	}
-
-	roundSize := req.RoundSize
-	if roundSize <= 0 {
-		roundSize = 5 // sensible default
-	}
-
-	// Generate a unique code (retrying on the rare collision).
-	var code string
-	for attempts := 0; attempts < 5; attempts++ {
-		c, err := generateCode(r.Context())
+	if req.QuizID != "" {
+		// Quiz-based game.
+		quizID, err = uuid.Parse(req.QuizID)
 		if err != nil {
-			slog.ErrorContext(r.Context(), "createGame: code generation failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeError(w, http.StatusUnprocessableEntity, "invalid quiz_id")
 			return
 		}
-		code = c
-		break // In production, check for code uniqueness in the DB; collisions are astronomically rare.
+		quiz, err := s.q.GetQuizByID(r.Context(), quizID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "quiz not found")
+			return
+		}
+		if quiz.OwnerID != u.ID {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		// Verify quiz has at least one round with at least one question.
+		rounds, err := s.q.ListQuizRounds(r.Context(), quizID)
+		if err != nil || len(rounds) == 0 {
+			writeError(w, http.StatusUnprocessableEntity, "quiz must have at least one round before starting a game")
+			return
+		}
+		totalQ, err := s.q.CountQuestionsInRound(r.Context(), rounds[0].ID)
+		if err != nil || totalQ == 0 {
+			writeError(w, http.StatusUnprocessableEntity, "quiz rounds must have at least one question each")
+			return
+		}
+		roundSize = 0 // unused for quiz-based games
+		// bankID stays zero — allowed because quiz_id is set
+	} else if req.BankID != "" {
+		// Legacy bank-based game.
+		bankID, err = uuid.Parse(req.BankID)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid bank_id")
+			return
+		}
+		bank, err := s.q.GetQuestionBank(r.Context(), bankID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "bank not found")
+			return
+		}
+		if bank.OwnerID != u.ID {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		count, err := s.q.CountQuestionsInBank(r.Context(), bankID)
+		if err != nil || count == 0 {
+			writeError(w, http.StatusUnprocessableEntity, "bank must have at least one question before starting a game")
+			return
+		}
+		roundSize = req.RoundSize
+		if roundSize <= 0 {
+			roundSize = 5
+		}
+	} else {
+		writeError(w, http.StatusUnprocessableEntity, "either quiz_id or bank_id is required")
+		return
+	}
+
+	code, err := generateCode(r.Context())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "createGame: code generation failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
 	}
 
 	gameID := uuid.New()
@@ -813,8 +859,9 @@ func (s *Service) createGame(w http.ResponseWriter, r *http.Request) {
 		ID:        gameID,
 		Code:      code,
 		HostID:    u.ID,
-		BankID:    bankID,
+		BankID:    pgtype.UUID{Bytes: bankID, Valid: bankID != uuid.Nil},
 		RoundSize: roundSize,
+		QuizID:    pgtype.UUID{Bytes: quizID, Valid: quizID != uuid.Nil},
 	})
 	if err != nil {
 		slog.ErrorContext(r.Context(), "createGame: insert failed", "err", err)
@@ -822,10 +869,338 @@ func (s *Service) createGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Initialise the in-memory room so players can connect via WebSocket.
-	s.hub.InitRoom(gameID, bankID, code, roundSize)
-
+	s.hub.InitRoom(gameID, quizID, bankID, code, roundSize)
 	writeJSON(w, http.StatusCreated, gameFromStore(game))
+}
+
+// --- Quizzes ---
+
+func (s *Service) listQuizzes(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	quizzes, err := s.q.ListQuizzesByOwner(r.Context(), u.ID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "listQuizzes: query failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	resp := make([]quizResponse, len(quizzes))
+	for i, q := range quizzes {
+		resp[i] = quizFromStore(q)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Service) createQuiz(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req createQuizRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusUnprocessableEntity, "name is required")
+		return
+	}
+	quiz, err := s.q.CreateQuiz(r.Context(), store.CreateQuizParams{
+		ID:          uuid.New(),
+		OwnerID:     u.ID,
+		Name:        req.Name,
+		Description: nullText(req.Description),
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "createQuiz: insert failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, quizFromStore(quiz))
+}
+
+func (s *Service) getQuiz(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	quizID, err := mustParseUUID(r, "quizID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	quiz, err := s.q.GetQuizByID(r.Context(), quizID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "quiz not found")
+		return
+	}
+	if quiz.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	// Load rounds + questions.
+	storeRounds, err := s.q.ListQuizRoundsWithQuestions(r.Context(), quizID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "getQuiz: list rounds failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	rounds := make([]roundResponse, len(storeRounds))
+	for i, sr := range storeRounds {
+		qs := make([]questionResponse, len(sr.Questions))
+		for j, q := range sr.Questions {
+			qs[j] = questionFromStore(q)
+		}
+		rounds[i] = roundFromStore(sr.Round, qs)
+	}
+	writeJSON(w, http.StatusOK, quizDetailResponse{
+		quizResponse: quizFromStore(quiz),
+		Rounds:        rounds,
+	})
+}
+
+func (s *Service) updateQuiz(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	quizID, err := mustParseUUID(r, "quizID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	quiz, err := s.q.GetQuizByID(r.Context(), quizID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "quiz not found")
+		return
+	}
+	if quiz.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	var req updateQuizRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusUnprocessableEntity, "name is required")
+		return
+	}
+	updated, err := s.q.UpdateQuiz(r.Context(), store.UpdateQuizParams{
+		ID:          quizID,
+		Name:        req.Name,
+		Description: nullText(req.Description),
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "updateQuiz: update failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, quizFromStore(updated))
+}
+
+func (s *Service) deleteQuiz(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	quizID, err := mustParseUUID(r, "quizID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	quiz, err := s.q.GetQuizByID(r.Context(), quizID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "quiz not found")
+		return
+	}
+	if quiz.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if err := s.q.DeleteQuiz(r.Context(), quizID); err != nil {
+		slog.ErrorContext(r.Context(), "deleteQuiz: delete failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Rounds ---
+
+func (s *Service) createRound(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	quizID, err := mustParseUUID(r, "quizID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	quiz, err := s.q.GetQuizByID(r.Context(), quizID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "quiz not found")
+		return
+	}
+	if quiz.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	var req createRoundRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// Determine next round number.
+	count, err := s.q.CountQuizRounds(r.Context(), quizID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "createRound: count failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	round, err := s.q.CreateQuizRound(r.Context(), store.CreateQuizRoundParams{
+		ID:          uuid.New(),
+		QuizID:      quizID,
+		RoundNumber: count + 1,
+		Title:       nullText(req.Title),
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "createRound: insert failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, roundFromStore(round, nil))
+}
+
+func (s *Service) updateRound(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	quizID, err := mustParseUUID(r, "quizID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	quiz, err := s.q.GetQuizByID(r.Context(), quizID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "quiz not found")
+		return
+	}
+	if quiz.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	roundID, err := mustParseUUID(r, "roundID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var req updateRoundRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	updated, err := s.q.UpdateQuizRound(r.Context(), roundID, nullText(req.Title))
+	if err != nil {
+		slog.ErrorContext(r.Context(), "updateRound: update failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, roundFromStore(updated, nil))
+}
+
+func (s *Service) deleteRound(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	quizID, err := mustParseUUID(r, "quizID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	quiz, err := s.q.GetQuizByID(r.Context(), quizID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "quiz not found")
+		return
+	}
+	if quiz.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	roundID, err := mustParseUUID(r, "roundID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.q.DeleteQuizRound(r.Context(), roundID); err != nil {
+		slog.ErrorContext(r.Context(), "deleteRound: delete failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setRoundQuestions handles PUT /quizzes/{quizID}/rounds/{roundID}/questions
+// Replaces the round's question list with the provided ordered slice of question IDs.
+func (s *Service) setRoundQuestions(w http.ResponseWriter, r *http.Request) {
+	u, err := s.currentUser(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	quizID, err := mustParseUUID(r, "quizID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	quiz, err := s.q.GetQuizByID(r.Context(), quizID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "quiz not found")
+		return
+	}
+	if quiz.OwnerID != u.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	roundID, err := mustParseUUID(r, "roundID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var req setRoundQuestionsRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	ids := make([]uuid.UUID, 0, len(req.QuestionIDs))
+	for _, raw := range req.QuestionIDs {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid question id %q", raw))
+			return
+		}
+		ids = append(ids, id)
+	}
+	if err := s.q.SetRoundQuestionsOrdered(r.Context(), roundID, ids); err != nil {
+		slog.ErrorContext(r.Context(), "setRoundQuestions: update failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // listGames handles GET /games
