@@ -84,5 +84,24 @@ DEV_AUTH_TOKEN=                 # same value as API's DEV_AUTH_TOKEN
 - `billing.NoopChecker{}` always grants entitlements; `subscriptions` table is intentionally unused.
 - `/healthz` and `/readyz` both check Postgres + Redis connectivity.
 - `seed_questions.sh` in `apps/api/` seeds dev question data.
-- No CI exists yet — GitHub Actions pipeline is planned.
+- CI: GitHub Actions — `ci.yml` (lint/test/typecheck on every push/PR), `release.yml` (semantic-release + Docker push on merge to `main`).
 - Deployment: DigitalOcean Kubernetes, GitOps via Argo CD + Kustomize (`deploy/`).
+- Docker images pushed to `ghcr.io/benbotsford/trivia-api` and `ghcr.io/benbotsford/trivia-web` on release.
+
+---
+
+## Commit format
+
+This repo uses **Conventional Commits** — required for semantic-release to version correctly.
+
+```
+feat: add question timer UI        # minor bump (1.x.0)
+fix: correct score calculation     # patch bump (1.0.x)
+feat!: redesign game state machine # major bump (x.0.0)
+chore: update deps                 # no release
+docs: update README                # no release
+ci: update workflow                # no release
+refactor: extract game helpers     # no release
+```
+
+`BREAKING CHANGE:` in the commit body also triggers a major bump. Always use the conventional prefix — commits without one are ignored by semantic-release.
