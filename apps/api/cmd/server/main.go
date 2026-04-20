@@ -149,6 +149,7 @@ func main() {
 	// rejecting any request without a valid Bearer token before it reaches a handler.
 	r.Group(func(r chi.Router) {
 		r.Use(authMiddleware.Handler)
+		userSvc.RegisterRoutes(r)
 		gameSvc.RegisterRoutes(r)
 	})
 

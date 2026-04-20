@@ -17,6 +17,13 @@ export interface Session {
   name: string
 }
 
+export interface UserProfile {
+  id: string
+  email?: string
+  display_name?: string
+  created_at: string
+}
+
 export interface MCChoice {
   text: string
   correct: boolean
