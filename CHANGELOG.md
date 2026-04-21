@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/benbotsford/trivia/compare/v1.1.0...v1.1.1) (2026-04-21)
+
+
+### Bug Fixes
+
+* trigger release to validate multi-arch build matrix ([86f8857](https://github.com/benbotsford/trivia/commit/86f8857689d86b29554e88dc2ff570f32428f417))
+
 # [1.1.0](https://github.com/benbotsford/trivia/compare/v1.0.4...v1.1.0) (2026-04-21)
 
 
