@@ -140,7 +140,7 @@ function QuizCard({ quiz, onDelete }: { quiz: Quiz; onDelete: () => void }) {
         <button
           onClick={handleLaunch}
           disabled={launching}
-          className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-40 transition-colors"
+          className="rounded-lg bg-green-600 px-4 py-2 text-sm font-display font-semibold text-white hover:bg-green-700 disabled:opacity-40 transition-colors"
         >
           {launching ? 'Launching…' : '▶ Launch Game'}
         </button>
