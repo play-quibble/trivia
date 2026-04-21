@@ -211,6 +211,17 @@ func (q *Queries) ListPlayersInGame(ctx context.Context, gameID uuid.UUID) ([]Ga
 	return items, nil
 }
 
+const clearPlayerLeft = `-- name: ClearPlayerLeft :exec
+UPDATE game_players
+SET left_at = NULL
+WHERE id = $1
+`
+
+func (q *Queries) ClearPlayerLeft(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearPlayerLeft, id)
+	return err
+}
+
 const markPlayerLeft = `-- name: MarkPlayerLeft :exec
 UPDATE game_players
 SET left_at = now()

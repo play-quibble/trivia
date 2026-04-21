@@ -17,6 +17,7 @@ import type {
 
 type Phase =
   | 'connecting'
+  | 'reconnecting'  // lost connection; attempting to reconnect
   | 'lobby'
   | 'question'      // questions appearing one at a time; player can answer each
   | 'round_ended'   // round over; waiting for host review
@@ -179,18 +180,62 @@ export default function PlayerGame({ code, wsBase }: Props) {
       return
     }
 
-    const url = `${wsBase}/ws/${code}?session=${encodeURIComponent(sessionToken)}`
-    const ws = new WebSocket(url)
-    wsRef.current = ws
+    const MAX_RETRIES = 3
+    const RETRY_DELAYS = [1500, 3000, 6000]
 
-    ws.onopen = () => setPhase('lobby')
-    ws.onmessage = (e) => handleMessageRef.current(e.data)
-    ws.onerror = () => {
-      setErrorMsg('Connection failed — the game may have ended or the code is wrong.')
-      setPhase('error')
+    let retries = 0
+    let everConnected = false
+    let ws: WebSocket | null = null
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null
+    let unmounted = false
+
+    function connect() {
+      if (unmounted) return
+      const url = `${wsBase}/ws/${code}?session=${encodeURIComponent(sessionToken)}`
+      ws = new WebSocket(url)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        if (unmounted) return
+        retries = 0
+        everConnected = true
+        setPhase('lobby')
+      }
+
+      ws.onmessage = (e) => handleMessageRef.current(e.data)
+
+      // onerror always fires before onclose — handle everything in onclose.
+      ws.onerror = () => {}
+
+      ws.onclose = (e) => {
+        if (unmounted) return
+        wsRef.current = null
+
+        // Only retry mid-session drops (we had a live connection before).
+        // If the initial connect failed, the session token or game code is
+        // likely wrong — don't retry, show the error immediately.
+        // Also don't retry on intentional server closes (1000/1001) or
+        // app-level rejections (4000+, e.g. auth failure).
+        const retryable = everConnected && e.code !== 1000 && e.code !== 1001 && e.code < 4000
+
+        if (retryable && retries < MAX_RETRIES) {
+          retries++
+          setPhase('reconnecting')
+          retryTimeout = setTimeout(connect, RETRY_DELAYS[retries - 1])
+        } else {
+          setErrorMsg('Connection failed — the game may have ended or the code is wrong.')
+          setPhase('error')
+        }
+      }
     }
 
-    return () => ws.close()
+    connect()
+
+    return () => {
+      unmounted = true
+      if (retryTimeout) clearTimeout(retryTimeout)
+      ws?.close()
+    }
   }, [wsBase, code]) // WebSocket only reconnects if the game code or server URL changes
 
   // ---- submit helpers -----------------------------------------------------
@@ -242,6 +287,17 @@ export default function PlayerGame({ code, wsBase }: Props) {
         {/* ---- CONNECTING ---- */}
         {phase === 'connecting' && (
           <Card><p className="text-center text-slate-400">Connecting…</p></Card>
+        )}
+
+        {/* ---- RECONNECTING ---- */}
+        {phase === 'reconnecting' && (
+          <Card>
+            <div className="py-6 text-center">
+              <div className="mb-3 text-4xl">🔄</div>
+              <p className="text-sm font-semibold text-slate-700">Connection lost</p>
+              <p className="mt-1 text-sm text-slate-400">Reconnecting…</p>
+            </div>
+          </Card>
         )}
 
         {/* ---- ERROR ---- */}

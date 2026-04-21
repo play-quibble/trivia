@@ -257,6 +257,7 @@ func (h *Hub) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	var isHost bool
 	var playerID uuid.UUID
 	var resolvedHostID uuid.UUID // set for host connections; checked against rm.hostID below
+	var isReconnect bool         // true when a player rejoins after a prior disconnect
 
 	switch {
 	case tokenParam != "":
@@ -284,6 +285,16 @@ func (h *Hub) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		playerID = player.ID
+		// If this player previously disconnected (left_at is set from our defer
+		// cleanup), clear it so they're back in the active roster.
+		if player.LeftAt.Valid {
+			isReconnect = true
+			if err := h.q.ClearPlayerLeft(r.Context(), player.ID); err != nil {
+				slog.Error("handleWebSocket: ClearPlayerLeft failed",
+					"playerID", player.ID, "err", err)
+				// Non-fatal — continue; they'll rejoin but may miss the roster update.
+			}
+		}
 
 	default:
 		http.Error(w, "must provide token or session query param", http.StatusBadRequest)
@@ -306,6 +317,21 @@ func (h *Hub) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If a player is reconnecting after a disconnect, broadcast the updated roster
+	// to the room so the host sees them reappear. Do this before upgrading so the
+	// broadcast happens whether or not the upgrade succeeds.
+	if isReconnect {
+		rm.mu.Lock()
+		phase := rm.phase
+		gameID := rm.gameID
+		rm.mu.Unlock()
+		if phase == phaseLobby {
+			if players, err := h.q.ListActivePlayersInGame(r.Context(), gameID); err == nil {
+				rm.broadcast(buildLobbyUpdateMsg(players))
+			}
+		}
+	}
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
 	})
@@ -314,15 +340,46 @@ func (h *Hub) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture context before registering the defer so the write goroutine and
+	// sendCurrentState can use it. The defer uses context.Background() instead
+	// because r.Context() is cancelled when the client disconnects — exactly
+	// when the cleanup DB calls need to run.
+	ctx := r.Context()
+
 	c := &client{conn: conn, send: make(chan Message, 64), isHost: isHost, playerID: playerID}
 	rm.addClient(c)
 
 	defer func() {
 		rm.removeClient(c)
+
+		// Mark the player as left in the database and broadcast the updated
+		// roster to the room. Skip this for host connections — the host leaving
+		// doesn't change the player list.
+		if !c.isHost && c.playerID != uuid.Nil {
+			cleanupCtx := context.Background()
+			if err := h.q.MarkPlayerLeft(cleanupCtx, c.playerID); err != nil {
+				slog.Error("handleWebSocket: MarkPlayerLeft failed",
+					"playerID", c.playerID, "err", err)
+			}
+			// Only re-broadcast the roster during the lobby — once the game is
+			// in progress, player disconnects don't affect the lobby UI.
+			rm.mu.Lock()
+			phase := rm.phase
+			gameID := rm.gameID
+			rm.mu.Unlock()
+			if phase == phaseLobby {
+				players, err := h.q.ListActivePlayersInGame(cleanupCtx, gameID)
+				if err == nil {
+					rm.broadcast(buildLobbyUpdateMsg(players))
+				} else {
+					slog.Error("handleWebSocket: player list query failed after disconnect",
+						"gameID", gameID, "err", err)
+				}
+			}
+		}
+
 		conn.Close(websocket.StatusNormalClosure, "bye")
 	}()
-
-	ctx := r.Context()
 
 	go func() {
 		for msg := range c.send {

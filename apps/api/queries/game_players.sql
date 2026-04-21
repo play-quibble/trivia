@@ -38,6 +38,11 @@ SET left_at = now()
 WHERE id = $1
   AND left_at IS NULL;
 
+-- name: ClearPlayerLeft :exec
+UPDATE game_players
+SET left_at = NULL
+WHERE id = $1;
+
 -- name: LeaderboardForGame :many
 SELECT id, display_name, score
 FROM game_players
