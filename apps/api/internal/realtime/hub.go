@@ -333,21 +333,33 @@ func (h *Hub) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	h.sendCurrentState(rm, c)
+	h.sendCurrentState(ctx, rm, c)
 
 	h.readLoop(ctx, c, gameCode)
 }
 
-// sendCurrentState replays relevant state to a reconnecting client.
-func (h *Hub) sendCurrentState(rm *room, c *client) {
+// sendCurrentState replays relevant state to a newly connected or reconnecting client.
+func (h *Hub) sendCurrentState(ctx context.Context, rm *room, c *client) {
 	rm.mu.Lock()
 	phase := rm.phase
+	gameID := rm.gameID
 	rounds := rm.rounds
 	currentRound := rm.currentRound
 	releasedCount := rm.releasedCount
 	rm.mu.Unlock()
 
 	switch phase {
+	case phaseLobby:
+		// Send the current player roster so the host (and any player who joins
+		// late) immediately sees who is already in the room without waiting for
+		// the next lobby_update broadcast.
+		players, err := h.q.ListActivePlayersInGame(ctx, gameID)
+		if err != nil {
+			slog.Error("sendCurrentState: player query failed", "err", err)
+			return
+		}
+		sendTo(c, buildLobbyUpdateMsg(players))
+
 	case phaseQuestion:
 		if len(rounds) > 0 && currentRound < len(rounds) {
 			rnd := rounds[currentRound]
@@ -358,6 +370,7 @@ func (h *Hub) sendCurrentState(rm *room, c *client) {
 				sendTo(c, buildQuizQuestionMsg(q, i, len(rnd.Questions), currentRound+1, totalRounds))
 			}
 		}
+
 	case phaseRoundReview:
 		// Only host needs the review screen; players see "waiting" via round_ended.
 		if c.isHost && len(rounds) > 0 && currentRound < len(rounds) {
@@ -367,7 +380,7 @@ func (h *Hub) sendCurrentState(rm *room, c *client) {
 			sendTo(c, msg)
 		} else if !c.isHost {
 			sendTo(c, mustMarshal(MsgRoundEnded, map[string]any{
-				"round":       currentRound + 1,
+				"round":        currentRound + 1,
 				"total_rounds": len(rounds),
 			}))
 		}
@@ -1013,13 +1026,35 @@ func buildQuizQuestionMsg(q store.Question, posInRound, totalInRound, round, tot
 	})
 }
 
-// BroadcastPlayerJoined notifies all room members that a new player has joined.
-func (h *Hub) BroadcastPlayerJoined(gameCode, displayName string) {
+// BroadcastPlayerJoined notifies all room members that the player roster has
+// changed. It fetches the full current player list and broadcasts it so clients
+// can replace their state rather than managing incremental adds.
+func (h *Hub) BroadcastPlayerJoined(ctx context.Context, gameCode string) {
 	rm := h.getRoom(gameCode)
 	if rm == nil {
 		return
 	}
-	rm.broadcast(mustMarshal(MsgLobbyUpdate, map[string]any{"player_name": displayName}))
+	players, err := h.q.ListActivePlayersInGame(ctx, rm.gameID)
+	if err != nil {
+		slog.Error("BroadcastPlayerJoined: player query failed", "err", err)
+		return
+	}
+	rm.broadcast(buildLobbyUpdateMsg(players))
+}
+
+// buildLobbyUpdateMsg constructs a lobby_update message containing the full
+// current player roster. Using a full list (rather than an incremental add)
+// means clients never need to reconcile partial state.
+func buildLobbyUpdateMsg(players []store.GamePlayer) Message {
+	type playerEntry struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+	}
+	entries := make([]playerEntry, len(players))
+	for i, p := range players {
+		entries[i] = playerEntry{ID: p.ID.String(), DisplayName: p.DisplayName}
+	}
+	return mustMarshal(MsgLobbyUpdate, map[string]any{"players": entries})
 }
 
 // Broadcast sends a message to every client in the named room.

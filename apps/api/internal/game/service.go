@@ -1395,7 +1395,7 @@ func (s *Service) joinGame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Notify everyone in the room that a new player joined.
-	s.hub.BroadcastPlayerJoined(game.Code, req.DisplayName)
+	s.hub.BroadcastPlayerJoined(r.Context(), game.Code)
 
 	writeJSON(w, http.StatusCreated, joinGameResponse{
 		GameCode:     game.Code,
