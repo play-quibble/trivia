@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker info *)",
+      "Bash(docker compose *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(git pull *)",
+      "Bash(gh run *)",
+      "Bash(gh api *)",
+      "Bash(git commit *)",
+      "Bash(curl -fsS -o /dev/null -w \"api: %{http_code}\\\\n\" http://localhost:8080/healthz)",
+      "Bash(curl -fsS -o /dev/null -w \"web: %{http_code}\\\\n\" http://localhost:3001)",
+      "Bash(docker image *)",
+      "Bash(go mod *)",
+      "Read(//Users/jason/.mise/installs/**)",
+      "Bash(mise which *)",
+      "Read(//opt/homebrew/bin/**)",
+      "Read(//usr/local/go/bin/**)",
+      "Bash(brew list *)",
+      "Bash(docker run *)"
+    ]
+  }
+}

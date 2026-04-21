@@ -32,6 +32,15 @@ type Config struct {
 
 	// Minimum log level: "debug" | "info" | "warn" | "error"
 	LogLevel string
+
+	// AutoMigrate runs embedded goose migrations on startup when true.
+	// Leave off in environments where migrations are managed out-of-band
+	// (e.g. a dedicated ops step before a rolling deploy).
+	AutoMigrate bool
+
+	// BootstrapSamples seeds sample question banks and questions on startup
+	// when true. Intended for local development; leave off in production.
+	BootstrapSamples bool
 }
 
 // Load reads configuration from environment variables.
@@ -45,8 +54,10 @@ func Load() (*Config, error) {
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),
 		Auth0Domain:   getEnv("AUTH0_DOMAIN", ""),
 		Auth0Audience: getEnv("AUTH0_AUDIENCE", ""),
-		DevAuthToken:  getEnv("DEV_AUTH_TOKEN", ""),
-		LogLevel:      getEnv("LOG_LEVEL", "info"),
+		DevAuthToken:     getEnv("DEV_AUTH_TOKEN", ""),
+		LogLevel:         getEnv("LOG_LEVEL", "info"),
+		AutoMigrate:      getEnvBool("AUTO_MIGRATE", false),
+		BootstrapSamples: getEnvBool("BOOTSTRAP_SAMPLES", false),
 	}
 	return c, nil
 }
@@ -56,6 +67,17 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	switch os.Getenv(key) {
+	case "1", "true", "TRUE", "True", "yes", "YES":
+		return true
+	case "0", "false", "FALSE", "False", "no", "NO":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func mustGetEnv(key string) string {

@@ -23,19 +23,6 @@ services:
       timeout: 5s
       retries: 5
 
-  migrate:
-    image: ghcr.io/kukymbr/goose-docker:latest
-    environment:
-      GOOSE_DRIVER: postgres
-      GOOSE_DBSTRING: "postgres://quibble:quibble@postgres:5432/quibble?sslmode=disable"
-      GOOSE_COMMAND: up
-    volumes:
-      - ./apps/api/migrations:/migrations:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: on-failure
-
   api:
     image: ghcr.io/benbotsford/trivia-api:latest
     ports:
@@ -49,9 +36,11 @@ services:
       AUTH0_DOMAIN: ""
       AUTH0_AUDIENCE: ""
       DEV_AUTH_TOKEN: "dev-secret"
+      AUTO_MIGRATE: "true"
+      BOOTSTRAP_SAMPLES: "true"
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     restart: on-failure

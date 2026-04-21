@@ -18,8 +18,10 @@ import (
 
 	"github.com/benbotsford/trivia/internal/auth"
 	"github.com/benbotsford/trivia/internal/billing"
+	"github.com/benbotsford/trivia/internal/bootstrap"
 	"github.com/benbotsford/trivia/internal/config"
 	"github.com/benbotsford/trivia/internal/game"
+	"github.com/benbotsford/trivia/internal/migrate"
 	"github.com/benbotsford/trivia/internal/realtime"
 	"github.com/benbotsford/trivia/internal/store"
 	"github.com/benbotsford/trivia/internal/user"
@@ -73,6 +75,26 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("postgres connected")
+
+	// -------------------------------------------------------------------------
+	// Schema migrations + sample-data bootstrap
+	// -------------------------------------------------------------------------
+	// Both steps are opt-in via env so production deploys that manage
+	// migrations out-of-band (and do not want sample data) stay untouched.
+	if cfg.AutoMigrate {
+		slog.Info("running migrations")
+		if err := migrate.Up(cfg.DatabaseURL); err != nil {
+			slog.Error("migration failed", "err", err)
+			os.Exit(1)
+		}
+	}
+	if cfg.BootstrapSamples {
+		slog.Info("seeding sample data")
+		if err := bootstrap.Run(ctx, pool); err != nil {
+			slog.Error("bootstrap failed", "err", err)
+			os.Exit(1)
+		}
+	}
 
 	// -------------------------------------------------------------------------
 	// Redis

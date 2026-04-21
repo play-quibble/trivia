@@ -1,0 +1,224 @@
+# Bootstrap sample data for local/dev environments.
+# Stable slugs produce deterministic UUIDs so repeated startups are idempotent.
+# MC questions derive correct_answer from the choice marked correct: true.
+
+banks:
+  - slug: manga-anime
+    name: Manga & Anime
+    description: Questions covering popular manga and anime series.
+    questions:
+      - type: multiple_choice
+        prompt: Which Studio Ghibli film follows a girl named Chihiro working in a spirit bathhouse?
+        choices:
+          - { text: Spirited Away, correct: true }
+          - { text: My Neighbor Totoro }
+          - { text: Princess Mononoke }
+          - { text: Howl's Moving Castle }
+      - type: text
+        prompt: What is the name of the pirate crew led by Monkey D. Luffy in One Piece?
+        correct_answer: Straw Hat Pirates
+      - type: multiple_choice
+        prompt: In Attack on Titan, what is the name of the special ops squad that protects Eren?
+        choices:
+          - { text: Survey Corps, correct: true }
+          - { text: Military Police }
+          - { text: Garrison Regiment }
+          - { text: Titan Hunters }
+      - type: text
+        prompt: Who is the author of the manga Naruto?
+        correct_answer: Masashi Kishimoto
+      - type: multiple_choice
+        prompt: In Dragon Ball Z, what transformation turns a Saiyan's hair golden and multiplies their power?
+        choices:
+          - { text: Super Saiyan, correct: true }
+          - { text: Kaio-ken }
+          - { text: Ultra Instinct }
+          - { text: Great Ape }
+      - type: text
+        prompt: What is the name of the high school attended by students in My Hero Academia?
+        correct_answer: UA High School
+      - type: multiple_choice
+        prompt: In Death Note, what must you know to kill someone using the notebook?
+        choices:
+          - { text: Their face and name, correct: true }
+          - { text: Their name only }
+          - { text: Their address }
+          - { text: Their date of birth }
+      - type: text
+        prompt: What is the name of the underground chasm in Made in Abyss?
+        correct_answer: The Abyss
+      - type: multiple_choice
+        prompt: Which anime features alchemists Edward and Alphonse Elric searching for the Philosopher's Stone?
+        choices:
+          - { text: Fullmetal Alchemist, correct: true }
+          - { text: Blue Exorcist }
+          - { text: Soul Eater }
+          - { text: Fairy Tail }
+      - type: text
+        prompt: In Demon Slayer, what is the name given to the elite ranks of the Demon Slayer Corps?
+        correct_answer: Hashira
+
+  - slug: arts-literature
+    name: Arts & Literature
+    description: Classic literature, painting, and the performing arts.
+    questions:
+      - type: multiple_choice
+        prompt: Who wrote the novel 'Pride and Prejudice'?
+        choices:
+          - { text: Jane Austen, correct: true }
+          - { text: Charlotte Brontë }
+          - { text: George Eliot }
+          - { text: Mary Shelley }
+      - type: text
+        prompt: Which Dutch post-impressionist painter cut off part of his own ear?
+        correct_answer: Vincent van Gogh
+      - type: multiple_choice
+        prompt: In Shakespeare's 'Romeo and Juliet', what are the two feuding family names?
+        choices:
+          - { text: Montague and Capulet, correct: true }
+          - { text: Verona and Mantua }
+          - { text: Benvolio and Tybalt }
+          - { text: Capulet and Mercutio }
+      - type: text
+        prompt: Who wrote the dystopian novel '1984'?
+        correct_answer: George Orwell
+      - type: multiple_choice
+        prompt: Which art movement is Salvador Dalí best associated with?
+        choices:
+          - { text: Surrealism, correct: true }
+          - { text: Cubism }
+          - { text: Dadaism }
+          - { text: Expressionism }
+      - type: text
+        prompt: Who wrote 'The Great Gatsby'?
+        correct_answer: F. Scott Fitzgerald
+      - type: multiple_choice
+        prompt: The Sistine Chapel ceiling was painted by which Renaissance artist?
+        choices:
+          - { text: Michelangelo, correct: true }
+          - { text: Leonardo da Vinci }
+          - { text: Raphael }
+          - { text: Donatello }
+      - type: text
+        prompt: Which American poet wrote 'The Raven' in 1845?
+        correct_answer: Edgar Allan Poe
+      - type: multiple_choice
+        prompt: Which novel begins with the line 'Call me Ishmael'?
+        choices:
+          - { text: Moby-Dick, correct: true }
+          - { text: The Old Man and the Sea }
+          - { text: Billy Budd }
+          - { text: Lord Jim }
+      - type: text
+        prompt: In which city is the Louvre Museum located?
+        correct_answer: Paris
+
+  - slug: science-nature
+    name: Science & Nature
+    description: Physics, chemistry, biology, and the natural world.
+    questions:
+      - type: multiple_choice
+        prompt: What is the chemical symbol for gold?
+        choices:
+          - { text: Au, correct: true }
+          - { text: Go }
+          - { text: Gd }
+          - { text: Ag }
+      - type: text
+        prompt: What planet is known as the Red Planet?
+        correct_answer: Mars
+      - type: multiple_choice
+        prompt: What is the powerhouse of the cell?
+        choices:
+          - { text: Mitochondria, correct: true }
+          - { text: Nucleus }
+          - { text: Ribosome }
+          - { text: Golgi apparatus }
+      - type: text
+        prompt: What is the most abundant gas in Earth's atmosphere?
+        correct_answer: Nitrogen
+      - type: multiple_choice
+        prompt: At what temperature (°C) does water boil at sea level?
+        choices:
+          - { text: "100", correct: true }
+          - { text: "90" }
+          - { text: "110" }
+          - { text: "80" }
+      - type: text
+        prompt: How many bones are in the adult human body?
+        correct_answer: "206"
+      - type: multiple_choice
+        prompt: Which planet in our solar system has the most moons?
+        choices:
+          - { text: Saturn, correct: true }
+          - { text: Jupiter }
+          - { text: Uranus }
+          - { text: Neptune }
+      - type: text
+        prompt: What force keeps planets in orbit around the Sun?
+        correct_answer: Gravity
+      - type: multiple_choice
+        prompt: What is the atomic number of carbon?
+        choices:
+          - { text: "6", correct: true }
+          - { text: "4" }
+          - { text: "8" }
+          - { text: "12" }
+      - type: text
+        prompt: What is the speed of light in a vacuum, approximately in km/s?
+        correct_answer: "300000"
+
+  - slug: general-knowledge
+    name: General Knowledge
+    description: A mix of geography, history, and everyday trivia.
+    questions:
+      - type: multiple_choice
+        prompt: How many time zones does Russia span?
+        choices:
+          - { text: "11", correct: true }
+          - { text: "9" }
+          - { text: "13" }
+          - { text: "7" }
+      - type: text
+        prompt: What is the currency of Japan?
+        correct_answer: Yen
+      - type: multiple_choice
+        prompt: Which country is home to the Great Barrier Reef?
+        choices:
+          - { text: Australia, correct: true }
+          - { text: Indonesia }
+          - { text: Philippines }
+          - { text: Fiji }
+      - type: text
+        prompt: How many sides does a pentagon have?
+        correct_answer: "5"
+      - type: multiple_choice
+        prompt: What is the most widely spoken language in the world by total speakers?
+        choices:
+          - { text: Mandarin Chinese, correct: true }
+          - { text: English }
+          - { text: Spanish }
+          - { text: Hindi }
+      - type: text
+        prompt: What is the smallest country in the world by area?
+        correct_answer: Vatican City
+      - type: multiple_choice
+        prompt: In what year did the first moon landing take place?
+        choices:
+          - { text: "1969", correct: true }
+          - { text: "1965" }
+          - { text: "1971" }
+          - { text: "1968" }
+      - type: text
+        prompt: What is the chemical symbol for iron?
+        correct_answer: Fe
+      - type: multiple_choice
+        prompt: Which ocean is the deepest in the world?
+        choices:
+          - { text: Pacific Ocean, correct: true }
+          - { text: Atlantic Ocean }
+          - { text: Indian Ocean }
+          - { text: Arctic Ocean }
+      - type: text
+        prompt: How many players are on a standard chess team in team competitions?
+        correct_answer: "4"
