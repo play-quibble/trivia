@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/benbotsford/trivia/compare/v1.0.1...v1.0.2) (2026-04-21)
+
+
+### Bug Fixes
+
+* add explicit Quiz[] type annotation to quizzes page ([cfffdb7](https://github.com/benbotsford/trivia/commit/cfffdb75045ae8dc422f05f4fef514a076c6d8bd))
+
 ## [1.0.1](https://github.com/benbotsford/trivia/compare/v1.0.0...v1.0.1) (2026-04-21)
 
 
