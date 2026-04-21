@@ -1,15 +1,18 @@
-# Development artifacts
+# Dev tooling — not needed in the image
+Makefile
+sqlc.yaml
+seed_questions.sh
+*.md
+
+# Dev environment
 .env
 .env.*
 !.env.example
-bin/
 
-# Go build cache
+# Build artifacts
+bin/
 *.test
 *.out
-
-# Migrations / seeds (not needed at runtime — baked into binary via goose embed or run separately)
-# Keep migrations/ included so goose can run them at startup if needed
 
 # Editor / OS
 .DS_Store

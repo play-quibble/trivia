@@ -608,7 +608,6 @@ func (h *Hub) onReleaseScores(ctx context.Context, rm *room) {
 
 	type playerRoundResult struct {
 		playerID        uuid.UUID
-		client          *client
 		questionResults []questionResult
 		totalPoints     int32
 	}

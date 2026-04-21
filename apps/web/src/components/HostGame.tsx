@@ -63,6 +63,7 @@ export default function HostGame({ code, gameID, gameStatus, initialPlayers = []
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectCount = useRef(0)
   const gameStatusRef = useRef(gameStatus)
+  const connectRef = useRef<() => void>(() => {})
 
   const [phase, setPhase] = useState<Phase>('connecting')
   const [players, setPlayers] = useState<string[]>(initialPlayers)
@@ -186,13 +187,17 @@ export default function HostGame({ code, gameID, gameStatus, initialPlayers = []
       if (reconnectCount.current < MAX_RECONNECT) {
         const attempt = reconnectCount.current++
         setPhase('connecting')
-        setTimeout(connect, retryDelay(attempt))
+        setTimeout(() => connectRef.current(), retryDelay(attempt))
       } else {
         setErrorMsg('Could not connect after several attempts. Check the API server is running.')
         setPhase('error')
       }
     }
   }, [wsBase, code, hostToken, handleMessage])
+
+  useEffect(() => {
+    connectRef.current = connect
+  }, [connect])
 
   useEffect(() => {
     connect()
@@ -305,7 +310,7 @@ export default function HostGame({ code, gameID, gameStatus, initialPlayers = []
             {releasedQuestions.length === 0 ? (
               <Card>
                 <p className="text-center text-sm text-slate-400 py-2">
-                  Press "Release Question" to reveal the first question to players.
+                  Press &quot;Release Question&quot; to reveal the first question to players.
                 </p>
               </Card>
             ) : (

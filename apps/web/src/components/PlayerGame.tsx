@@ -174,6 +174,7 @@ export default function PlayerGame({ code, wsBase }: Props) {
   useEffect(() => {
     const sessionToken = sessionStorage.getItem(`quibble_session_${code}`)
     if (!sessionToken) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPhase('no-session')
       return
     }

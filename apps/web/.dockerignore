@@ -1,10 +1,16 @@
-# Dependencies
+# Dependencies (reinstalled in Docker)
 node_modules/
 
 # Next.js build output (rebuilt in Docker)
 .next/
 
-# Environment files
+# Config only needed at build time — not in runtime image
+# (standalone output copies what it needs)
+tailwind.config.ts
+postcss.config.mjs
+tsconfig.json
+
+# Dev environment
 .env
 .env.*
 !.env.example

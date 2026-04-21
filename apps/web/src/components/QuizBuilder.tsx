@@ -21,6 +21,7 @@ export default function QuizBuilder({ quiz: initialQuiz, banks }: Props) {
   const [quiz, setQuiz] = useState<QuizDetail>(initialQuiz)
   // Sync local state whenever the server re-renders with fresh quiz data
   // (e.g. after router.refresh() following a round add/delete).
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setQuiz(initialQuiz) }, [initialQuiz])
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState('')
@@ -202,7 +203,7 @@ function RoundCard({
       {/* Questions list */}
       {round.questions.length === 0 ? (
         <p className="px-5 py-4 text-sm text-slate-400 italic">
-          No questions yet — click "Add Questions" to pick from your banks.
+          No questions yet — click &quot;Add Questions&quot; to pick from your banks.
         </p>
       ) : (
         <ul className="divide-y divide-gray-50">
@@ -284,6 +285,7 @@ function QuestionPickerModal({
 
   // Load initial bank on mount.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (selectedBankID) loadBank(selectedBankID)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
