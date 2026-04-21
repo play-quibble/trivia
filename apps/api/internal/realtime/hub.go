@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -107,6 +108,7 @@ type room struct {
 	clients map[*client]struct{}
 
 	// Identifiers set when the room is initialised.
+	code   string    // game code — used as the key in Hub.rooms
 	gameID uuid.UUID
 	hostID uuid.UUID // DB user ID of the host; used to verify WS auth
 	quizID uuid.UUID // zero value for bank-based (legacy) games
@@ -145,8 +147,9 @@ type legacySubmission struct {
 	name      string
 }
 
-func newRoom(gameID, quizID, bankID, hostID uuid.UUID, roundSize int32) *room {
+func newRoom(code string, gameID, quizID, bankID, hostID uuid.UUID, roundSize int32) *room {
 	return &room{
+		code:        code,
 		clients:     make(map[*client]struct{}),
 		gameID:      gameID,
 		hostID:      hostID,
@@ -236,7 +239,7 @@ func (h *Hub) RegisterRoutes(r chi.Router) {
 func (h *Hub) InitRoom(gameID, quizID, bankID, hostID uuid.UUID, code string, roundSize int32) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.rooms[code] = newRoom(gameID, quizID, bankID, hostID, roundSize)
+	h.rooms[code] = newRoom(code, gameID, quizID, bankID, hostID, roundSize)
 }
 
 // handleWebSocket upgrades an HTTP connection to WebSocket.
@@ -857,15 +860,27 @@ func (h *Hub) onStartNextRound(ctx context.Context, rm *room) {
 }
 
 // onEndGame marks the game complete and broadcasts the final leaderboard.
+// After a short delay (to allow the final messages to flush) the room is
+// removed from h.rooms so it no longer leaks memory.
 func (h *Hub) onEndGame(ctx context.Context, rm *room) {
 	rm.mu.Lock()
 	rm.phase = phaseEnded
+	code := rm.code
 	rm.mu.Unlock()
 
 	if _, err := h.q.EndGame(ctx, rm.gameID); err != nil {
 		slog.Error("onEndGame: db update failed", "err", err)
 	}
 	h.broadcastLeaderboard(ctx, rm, true)
+
+	// Schedule room eviction. The short delay lets the final broadcast flush
+	// to all clients before we drop the room pointer.
+	time.AfterFunc(30*time.Second, func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		delete(h.rooms, code)
+		slog.Info("evicted ended room", "code", code)
+	})
 }
 
 // broadcastLeaderboard fetches scores from the DB and broadcasts them.
