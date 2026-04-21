@@ -89,8 +89,8 @@ export default function HostGame({ code, gameID, gameStatus, initialPlayers = []
 
     switch (msg.type) {
       case 'lobby_update': {
-        const p = msg.payload as { player_name: string }
-        setPlayers(prev => prev.includes(p.player_name) ? prev : [...prev, p.player_name])
+        const p = msg.payload as { players: { id: string; display_name: string }[] }
+        setPlayers(p.players?.map(pl => pl.display_name) ?? [])
         break
       }
 
@@ -174,7 +174,7 @@ export default function HostGame({ code, gameID, gameStatus, initialPlayers = []
   }, [])
 
   const connect = useCallback(() => {
-    const url = `${wsBase}/ws/${code}?host_token=${encodeURIComponent(hostToken)}`
+    const url = `${wsBase}/ws/${code}?token=${encodeURIComponent(hostToken)}`
     const ws = new WebSocket(url)
     wsRef.current = ws
 
