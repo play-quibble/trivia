@@ -79,7 +79,7 @@ export default function QuizBuilder({ quiz: initialQuiz, banks }: Props) {
         <button
           onClick={handleLaunchGame}
           disabled={launchPending || quiz.rounds.length === 0}
-          className="rounded-lg bg-brand-blue px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-blue/90 disabled:opacity-40 transition-colors whitespace-nowrap"
+          className="rounded-lg bg-green-600 px-4 py-2 text-sm font-display font-semibold text-white hover:bg-green-700 disabled:opacity-40 transition-colors"
         >
           {launchPending ? 'Creating game…' : '▶ Launch Game'}
         </button>
