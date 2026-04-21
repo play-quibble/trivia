@@ -1,0 +1,67 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: quibble
+      POSTGRES_PASSWORD: quibble
+      POSTGRES_DB: quibble
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quibble"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    image: ghcr.io/kukymbr/goose-docker:latest
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: "postgres://quibble:quibble@postgres:5432/quibble?sslmode=disable"
+      GOOSE_COMMAND: up
+    volumes:
+      - ./apps/api/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure
+
+  api:
+    image: ghcr.io/benbotsford/trivia-api:latest
+    ports:
+      - "8080:8080"
+    environment:
+      ADDR: ":8080"
+      DATABASE_URL: "postgres://quibble:quibble@postgres:5432/quibble?sslmode=disable"
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: ""
+      LOG_LEVEL: "info"
+      AUTH0_DOMAIN: ""
+      AUTH0_AUDIENCE: ""
+      DEV_AUTH_TOKEN: "dev-secret"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: on-failure
+
+  web:
+    image: ghcr.io/benbotsford/trivia-web:latest
+    ports:
+      - "3000:3000"
+    environment:
+      API_URL: "http://api:8080"
+      DEV_AUTH_TOKEN: "dev-secret"
+    depends_on:
+      - api
