@@ -72,6 +72,10 @@ export default function PlayerGame({ code, wsBase }: Props) {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const [isFinal, setIsFinal] = useState(false)
 
+  // selectedChoices tracks which MC option the player has highlighted but not
+  // yet confirmed. Separate from textInputs (which drives text question inputs).
+  const [selectedChoices, setSelectedChoices] = useState<Record<string, string>>({})
+
   // Keep a stable ref to the latest textInputs so handleMessage can read the
   // current value without being listed as a dependency. This prevents the
   // WebSocket effect from re-running (and tearing down the connection) every
@@ -251,7 +255,9 @@ export default function PlayerGame({ code, wsBase }: Props) {
     send(wsRef.current, 'submit_answer', { question_id: questionID, answer })
   }
 
-  function submitChoice(questionID: string, choice: string) {
+  function submitChoice(questionID: string) {
+    const choice = selectedChoices[questionID]
+    if (!choice) return
     setActiveQuestions(prev =>
       prev.map(q => q.id === questionID ? { ...q, submittedAnswer: choice } : q)
     )
@@ -336,9 +342,11 @@ export default function PlayerGame({ code, wsBase }: Props) {
                 key={q.id}
                 question={q}
                 textValue={textInputs[q.id] ?? ''}
+                selectedChoice={selectedChoices[q.id]}
                 onTextChange={(val) => setTextInputs(prev => ({ ...prev, [q.id]: val }))}
+                onSelectChoice={(choice) => setSelectedChoices(prev => ({ ...prev, [q.id]: choice }))}
                 onSubmitText={(e) => submitText(q.id, e)}
-                onSubmitChoice={(choice) => submitChoice(q.id, choice)}
+                onSubmitChoice={() => submitChoice(q.id)}
               />
             ))}
             <p className="text-center text-xs text-slate-400">
@@ -458,15 +466,19 @@ export default function PlayerGame({ code, wsBase }: Props) {
 function QuestionCard({
   question,
   textValue,
+  selectedChoice,
   onTextChange,
+  onSelectChoice,
   onSubmitText,
   onSubmitChoice,
 }: {
   question: ActiveQuestion
   textValue: string
+  selectedChoice?: string
   onTextChange: (val: string) => void
+  onSelectChoice: (choice: string) => void
   onSubmitText: (e: React.FormEvent) => void
-  onSubmitChoice: (choice: string) => void
+  onSubmitChoice: () => void
 }) {
   const submitted = !!question.submittedAnswer
 
@@ -532,15 +544,29 @@ function QuestionCard({
         {/* MC choices (not yet submitted) */}
         {!submitted && question.type === 'multiple_choice' && question.choices && (
           <div className="space-y-1.5">
-            {question.choices.map((c, i) => (
-              <button
-                key={i}
-                onClick={() => onSubmitChoice(c)}
-                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-slate-700 shadow-sm hover:border-brand-blue/40 hover:bg-brand-blue/5 active:scale-[0.99] transition-all"
-              >
-                {c}
-              </button>
-            ))}
+            {question.choices.map((c, i) => {
+              const isSelected = selectedChoice === c
+              return (
+                <button
+                  key={i}
+                  onClick={() => onSelectChoice(c)}
+                  className={`w-full rounded-xl border px-4 py-2.5 text-left text-sm font-medium shadow-sm active:scale-[0.99] transition-all ${
+                    isSelected
+                      ? 'border-brand-blue bg-brand-blue/10 text-brand-blue'
+                      : 'border-gray-200 bg-white text-slate-700 hover:border-brand-blue/40 hover:bg-brand-blue/5'
+                  }`}
+                >
+                  {c}
+                </button>
+              )
+            })}
+            <button
+              onClick={onSubmitChoice}
+              disabled={!selectedChoice}
+              className="mt-1 w-full rounded-xl bg-brand-blue py-2.5 text-sm font-semibold text-white hover:bg-brand-blue/90 disabled:opacity-40 transition-colors"
+            >
+              Submit Answer
+            </button>
           </div>
         )}
       </div>
