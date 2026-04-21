@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/play-quibble/trivia/compare/v1.3.0...v1.4.0) (2026-04-21)
+
+
+### Features
+
+* **realtime:** send full player roster on lobby connect and player join ([066aaf7](https://github.com/play-quibble/trivia/commit/066aaf79cef6f23ce0ed4cb4a7f876514a530394))
+
 # [1.3.0](https://github.com/benbotsford/trivia/compare/v1.2.0...v1.3.0) (2026-04-21)
 
 
