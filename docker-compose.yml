@@ -59,7 +59,7 @@ services:
   web:
     image: ghcr.io/benbotsford/trivia-web:latest
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       API_URL: "http://api:8080"
       DEV_AUTH_TOKEN: "dev-secret"
