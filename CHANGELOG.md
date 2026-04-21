@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/benbotsford/trivia/compare/v1.1.2...v1.2.0) (2026-04-21)
+
+
+### Features
+
+* Remove migrate service from docker-compose and enable auto-migration in the API service ([383325b](https://github.com/benbotsford/trivia/commit/383325b142e4dc2e42a7e4f3b3ab5b4245805cfa))
+
 ## [1.1.2](https://github.com/benbotsford/trivia/compare/v1.1.1...v1.1.2) (2026-04-21)
 
 
