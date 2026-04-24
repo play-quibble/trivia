@@ -48,6 +48,13 @@ export interface UseGameSocketResult {
    * so callers don't need to guard against race conditions.
    */
   send: (type: string, payload?: unknown) => void
+
+  /**
+   * Manually retry the connection after a failure. Resets the retry counter
+   * so the full backoff sequence starts fresh. Safe to call from a "Retry"
+   * button — no-ops if a connection attempt is already in progress.
+   */
+  retry: () => void
 }
 
 // ---------------------------------------------------------------------------
@@ -85,10 +92,24 @@ export function useGameSocket(
   // Stable ref to the live WebSocket so `send` never captures a stale handle.
   const wsRef = useRef<WebSocket | null>(null)
 
+  // Refs shared between the effect and the `retry` callback so retry() can
+  // reset the counter and re-invoke connect() without re-running the effect.
+  const retriesRef = useRef(0)
+  const connectRef = useRef<() => void>(() => {})
+
   const send = useCallback((type: string, payload?: unknown) => {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return
     ws.send(JSON.stringify({ type, payload: payload ?? {} }))
+  }, [])
+
+  const retry = useCallback(() => {
+    // No-op if already connecting or open.
+    const ws = wsRef.current
+    if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return
+    retriesRef.current = 0
+    setStatus('connecting')
+    connectRef.current()
   }, [])
 
   useEffect(() => {
@@ -96,10 +117,11 @@ export function useGameSocket(
     // don't want the effect re-running just because a parent passed a new literal.
     const maxRetries = optionsRef.current.maxRetries ?? 5
 
-    let retries = 0
     let everConnected = false
     let retryTimeout: ReturnType<typeof setTimeout> | null = null
     let unmounted = false
+
+    retriesRef.current = 0
 
     function backoffMs(attempt: number) {
       return Math.min(1000 * Math.pow(2, attempt), 16_000)
@@ -113,7 +135,7 @@ export function useGameSocket(
 
       ws.onopen = () => {
         if (unmounted) return
-        retries = 0
+        retriesRef.current = 0
         everConnected = true
         setStatus('open')
         optionsRef.current.onOpen?.()
@@ -147,16 +169,17 @@ export function useGameSocket(
           e.code !== 1001 &&
           e.code < 4000
 
-        if (retryable && retries < maxRetries) {
+        if (retryable && retriesRef.current < maxRetries) {
           setStatus('reconnecting')
-          retryTimeout = setTimeout(connect, backoffMs(retries))
-          retries++
+          retryTimeout = setTimeout(connect, backoffMs(retriesRef.current))
+          retriesRef.current++
         } else {
           setStatus('failed')
         }
       }
     }
 
+    connectRef.current = connect
     setStatus('connecting')
     connect()
 
@@ -171,5 +194,5 @@ export function useGameSocket(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url])
 
-  return { status, send }
+  return { status, send, retry }
 }

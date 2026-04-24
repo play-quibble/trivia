@@ -33,6 +33,9 @@ export interface HostSocketHandlers {
 export interface UseHostSocketResult {
   status: SocketStatus
 
+  /** Manually retry after a failed connection (e.g. from an error-state button). */
+  retry: () => void
+
   // Host control actions — each no-ops silently if the socket is not open.
   startGame: () => void
   releaseQuestion: () => void
@@ -100,7 +103,7 @@ export function useHostSocket(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const { status, send } = useGameSocket(url, {
+  const { status, send, retry } = useGameSocket(url, {
     onMessage,
     onOpen: handlers.onOpen,
   })
@@ -123,6 +126,7 @@ export function useHostSocket(
 
   return {
     status,
+    retry,
     startGame,
     releaseQuestion,
     endRound,

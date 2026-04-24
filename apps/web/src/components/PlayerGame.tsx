@@ -1,31 +1,24 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { usePlayerSocket } from '@/lib/usePlayerSocket'
 import type {
-  QuestionReleasedPayload,
-  RoundEndedPayload,
   RoundScoresPayload,
   RoundScoreQuestion,
   LeaderboardPayload,
   LeaderboardEntry,
-  AnswerAcceptedPayload,
-  GameStartedPayload,
 } from '@/types'
 
 // ---- types ----------------------------------------------------------------
 
-type Phase =
-  | 'connecting'
-  | 'reconnecting'  // lost connection; attempting to reconnect
+type GamePhase =
   | 'lobby'
   | 'question'      // questions appearing one at a time; player can answer each
   | 'round_ended'   // round over; waiting for host review
   | 'round_scores'  // host released scores — player sees their results
   | 'leaderboard'   // between-round scoreboard
   | 'ended'         // final scoreboard
-  | 'error'
-  | 'no-session'
 
 interface ActiveQuestion {
   id: string
@@ -38,13 +31,6 @@ interface ActiveQuestion {
   correct?: boolean
 }
 
-// ---- helpers ---------------------------------------------------------------
-
-function send(ws: WebSocket | null, type: string, payload?: unknown) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return
-  ws.send(JSON.stringify({ type, payload: payload ?? {} }))
-}
-
 // ---- component -------------------------------------------------------------
 
 interface Props {
@@ -54,9 +40,16 @@ interface Props {
 
 export default function PlayerGame({ code, wsBase }: Props) {
   const router = useRouter()
-  const wsRef = useRef<WebSocket | null>(null)
-  const [phase, setPhase] = useState<Phase>('connecting')
-  const [errorMsg, setErrorMsg] = useState('')
+
+  // Read session token once at mount — written by the join page.
+  const [sessionToken] = useState<string>(() =>
+    typeof window !== 'undefined'
+      ? (sessionStorage.getItem(`quibble_session_${code}`) ?? '')
+      : ''
+  )
+
+  // Game phase (connection status drives the connecting/reconnecting/error UI)
+  const [phase, setPhase] = useState<GamePhase>('lobby')
 
   // Round state
   const [currentRound, setCurrentRound] = useState(1)
@@ -76,183 +69,95 @@ export default function PlayerGame({ code, wsBase }: Props) {
   // yet confirmed. Separate from textInputs (which drives text question inputs).
   const [selectedChoices, setSelectedChoices] = useState<Record<string, string>>({})
 
-  // Keep a stable ref to the latest textInputs so handleMessage can read the
-  // current value without being listed as a dependency. This prevents the
-  // WebSocket effect from re-running (and tearing down the connection) every
-  // time the player types a character.
-  const textInputsRef = useRef(textInputs)
-  useEffect(() => { textInputsRef.current = textInputs }, [textInputs])
+  // ---- socket ---------------------------------------------------------------
+  // textInputs is read inside onAnswerAccepted to stamp the submitted answer
+  // onto the question card. We use a ref inside the hook's onMessage to avoid
+  // stale closure issues — but here we can just read the setter's latest value
+  // by capturing it in the handler directly (handlers are kept current via
+  // optionsRef in useGameSocket, so we always get the latest textInputs).
 
-  const handleMessage = useCallback((raw: string) => {
-    let msg: { type: string; payload?: unknown }
-    try { msg = JSON.parse(raw) } catch { return }
+  const { status, submitAnswer } = usePlayerSocket(wsBase, code, sessionToken, {
+    onOpen: () => setPhase('lobby'),
 
-    switch (msg.type) {
-      case 'game_started': {
-        const p = msg.payload as GameStartedPayload
-        setCurrentRound(p.round ?? 1)
-        setTotalRounds(p.total_rounds ?? 1)
-        setActiveQuestions([])
-        setTextInputs({})
-        setPhase('question')
-        break
-      }
+    onGameStarted: (p) => {
+      setCurrentRound(p.round ?? 1)
+      setTotalRounds(p.total_rounds ?? 1)
+      setActiveQuestions([])
+      setTextInputs({})
+      setPhase('question')
+    },
 
-      case 'question_released': {
-        const p = msg.payload as QuestionReleasedPayload
-        setCurrentRound(p.round)
-        setTotalRounds(p.total_rounds)
-        setPhase('question')
-        setActiveQuestions(prev => {
-          if (prev.find(q => q.id === p.question.id)) return prev
-          return [...prev, {
-            id: p.question.id,
-            type: p.question.type,
-            prompt: p.question.prompt,
-            points: p.question.points,
-            choices: p.question.choices,
-            posInRound: p.pos_in_round,
-          }]
-        })
-        break
-      }
+    onQuestionReleased: (p) => {
+      setCurrentRound(p.round)
+      setTotalRounds(p.total_rounds)
+      setPhase('question')
+      setActiveQuestions(prev => {
+        if (prev.find(q => q.id === p.question.id)) return prev
+        return [...prev, {
+          id: p.question.id,
+          type: p.question.type,
+          prompt: p.question.prompt,
+          points: p.question.points,
+          choices: p.question.choices,
+          posInRound: p.pos_in_round,
+        }]
+      })
+    },
 
-      case 'answer_accepted': {
-        const p = msg.payload as AnswerAcceptedPayload
-        if (p.question_id) {
-          // Don't apply the server's instant correct/incorrect verdict here — the host
-          // reviews answers manually before scores are released. Keeping `correct`
-          // undefined shows the neutral "submitted" state until round_scores arrives.
-          setActiveQuestions(prev =>
-            prev.map(q => q.id === p.question_id
-              ? { ...q, submittedAnswer: textInputsRef.current[q.id] ?? q.submittedAnswer }
-              : q
-            )
+    onAnswerAccepted: (p) => {
+      if (p.question_id) {
+        // Don't apply the server's instant correct/incorrect verdict here — the
+        // host reviews answers manually before scores are released. Keeping
+        // `correct` undefined shows the neutral "submitted" state until
+        // round_scores arrives.
+        setActiveQuestions(prev =>
+          prev.map(q => q.id === p.question_id
+            ? { ...q, submittedAnswer: textInputs[q.id] ?? q.submittedAnswer }
+            : q
           )
-        }
-        break
+        )
       }
+    },
 
-      case 'round_ended': {
-        const p = msg.payload as RoundEndedPayload
-        setCurrentRound(p.round)
-        setTotalRounds(p.total_rounds)
-        setPhase('round_ended')
-        break
-      }
+    onRoundEnded: (p) => {
+      setCurrentRound(p.round)
+      setTotalRounds(p.total_rounds)
+      setPhase('round_ended')
+    },
 
-      case 'round_scores': {
-        const p = msg.payload as RoundScoresPayload
-        setCurrentRound(p.round)
-        setTotalRounds(p.total_rounds)
-        setRoundResults(p.questions ?? [])
-        setRoundScore(p.round_score ?? 0)
-        setPhase('round_scores')
-        break
-      }
+    onRoundScores: (p: RoundScoresPayload) => {
+      setCurrentRound(p.round)
+      setTotalRounds(p.total_rounds)
+      setRoundResults(p.questions ?? [])
+      setRoundScore(p.round_score ?? 0)
+      setPhase('round_scores')
+    },
 
-      case 'round_leaderboard': {
-        const p = msg.payload as LeaderboardPayload
-        setLeaderboard(p.entries ?? [])
-        setCurrentRound(p.round)
-        setTotalRounds(p.total_rounds)
-        setIsFinal(false)
-        setPhase('leaderboard')
-        break
-      }
+    onRoundLeaderboard: (p: LeaderboardPayload) => {
+      setLeaderboard(p.entries ?? [])
+      setCurrentRound(p.round)
+      setTotalRounds(p.total_rounds)
+      setIsFinal(false)
+      setPhase('leaderboard')
+    },
 
-      case 'game_ended': {
-        const p = msg.payload as LeaderboardPayload
-        setLeaderboard(p.entries ?? [])
-        setIsFinal(true)
-        setPhase('ended')
-        break
-      }
-    }
-  }, []) // stable — reads textInputs via ref, so no dependency needed
+    onGameEnded: (p: LeaderboardPayload) => {
+      setLeaderboard(p.entries ?? [])
+      setIsFinal(true)
+      setPhase('ended')
+    },
+  })
 
-  // Keep a ref to the latest handleMessage so the WebSocket effect never needs
-  // to re-run just because the handler was recreated.
-  const handleMessageRef = useRef(handleMessage)
-  useEffect(() => { handleMessageRef.current = handleMessage }, [handleMessage])
-
-  useEffect(() => {
-    const sessionToken = sessionStorage.getItem(`quibble_session_${code}`)
-    if (!sessionToken) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setPhase('no-session')
-      return
-    }
-
-    const MAX_RETRIES = 3
-    const RETRY_DELAYS = [1500, 3000, 6000]
-
-    let retries = 0
-    let everConnected = false
-    let ws: WebSocket | null = null
-    let retryTimeout: ReturnType<typeof setTimeout> | null = null
-    let unmounted = false
-
-    function connect() {
-      if (unmounted) return
-      const url = `${wsBase}/ws/${code}?session=${encodeURIComponent(sessionToken!)}`
-      ws = new WebSocket(url)
-      wsRef.current = ws
-
-      ws.onopen = () => {
-        if (unmounted) return
-        retries = 0
-        everConnected = true
-        setPhase('lobby')
-      }
-
-      ws.onmessage = (e) => handleMessageRef.current(e.data)
-
-      // onerror always fires before onclose — handle everything in onclose.
-      ws.onerror = () => {}
-
-      ws.onclose = (e) => {
-        if (unmounted) return
-        wsRef.current = null
-
-        // Only retry mid-session drops (we had a live connection before).
-        // If the initial connect failed, the session token or game code is
-        // likely wrong — don't retry, show the error immediately.
-        // Also don't retry on intentional server closes (1000/1001) or
-        // app-level rejections (4000+, e.g. auth failure).
-        const retryable = everConnected && e.code !== 1000 && e.code !== 1001 && e.code < 4000
-
-        if (retryable && retries < MAX_RETRIES) {
-          retries++
-          setPhase('reconnecting')
-          retryTimeout = setTimeout(connect, RETRY_DELAYS[retries - 1])
-        } else {
-          setErrorMsg('Connection failed — the game may have ended or the code is wrong.')
-          setPhase('error')
-        }
-      }
-    }
-
-    connect()
-
-    return () => {
-      unmounted = true
-      if (retryTimeout) clearTimeout(retryTimeout)
-      ws?.close()
-    }
-  }, [wsBase, code]) // WebSocket only reconnects if the game code or server URL changes
-
-  // ---- submit helpers -----------------------------------------------------
+  // ---- submit helpers -------------------------------------------------------
 
   function submitText(questionID: string, e: React.FormEvent) {
     e.preventDefault()
     const answer = (textInputs[questionID] ?? '').trim()
     if (!answer) return
-    // Mark locally submitted
     setActiveQuestions(prev =>
       prev.map(q => q.id === questionID ? { ...q, submittedAnswer: answer } : q)
     )
-    send(wsRef.current, 'submit_answer', { question_id: questionID, answer })
+    submitAnswer(questionID, answer)
   }
 
   function submitChoice(questionID: string) {
@@ -261,10 +166,10 @@ export default function PlayerGame({ code, wsBase }: Props) {
     setActiveQuestions(prev =>
       prev.map(q => q.id === questionID ? { ...q, submittedAnswer: choice } : q)
     )
-    send(wsRef.current, 'submit_answer', { question_id: questionID, answer: choice })
+    submitAnswer(questionID, choice)
   }
 
-  // ---- render -------------------------------------------------------------
+  // ---- render ---------------------------------------------------------------
 
   const medals = ['🥇', '🥈', '🥉']
 
@@ -278,7 +183,7 @@ export default function PlayerGame({ code, wsBase }: Props) {
         </p>
 
         {/* ---- NO SESSION ---- */}
-        {phase === 'no-session' && (
+        {!sessionToken && (
           <Card accent="red">
             <p className="mb-4 text-sm text-slate-600">You need to join this game first.</p>
             <button
@@ -291,12 +196,12 @@ export default function PlayerGame({ code, wsBase }: Props) {
         )}
 
         {/* ---- CONNECTING ---- */}
-        {phase === 'connecting' && (
+        {sessionToken && status === 'connecting' && (
           <Card><p className="text-center text-slate-400">Connecting…</p></Card>
         )}
 
         {/* ---- RECONNECTING ---- */}
-        {phase === 'reconnecting' && (
+        {sessionToken && status === 'reconnecting' && (
           <Card>
             <div className="py-6 text-center">
               <div className="mb-3 text-4xl">🔄</div>
@@ -307,9 +212,11 @@ export default function PlayerGame({ code, wsBase }: Props) {
         )}
 
         {/* ---- ERROR ---- */}
-        {phase === 'error' && (
+        {sessionToken && status === 'failed' && (
           <Card accent="red">
-            <p className="text-sm text-brand-red">{errorMsg}</p>
+            <p className="text-sm text-brand-red">
+              Connection failed — the game may have ended or the code is wrong.
+            </p>
             <button
               onClick={() => router.push('/join')}
               className="mt-4 w-full rounded-lg border border-gray-200 py-2 text-sm text-slate-600 hover:bg-slate-50"
@@ -319,141 +226,146 @@ export default function PlayerGame({ code, wsBase }: Props) {
           </Card>
         )}
 
-        {/* ---- LOBBY ---- */}
-        {phase === 'lobby' && (
-          <Card>
-            <div className="py-8 text-center">
-              <div className="mb-3 text-5xl">⏳</div>
-              <p className="text-base font-semibold text-slate-700">You&apos;re in!</p>
-              <p className="mt-1 text-sm text-slate-500">Waiting for the host to start…</p>
-              <p className="mt-4 font-display text-3xl font-bold tracking-widest text-brand-blue">{code}</p>
-            </div>
-          </Card>
-        )}
+        {/* ---- GAME UI (only shown when socket is open) ---- */}
+        {sessionToken && status === 'open' && (
+          <>
+            {/* ---- LOBBY ---- */}
+            {phase === 'lobby' && (
+              <Card>
+                <div className="py-8 text-center">
+                  <div className="mb-3 text-5xl">⏳</div>
+                  <p className="text-base font-semibold text-slate-700">You&apos;re in!</p>
+                  <p className="mt-1 text-sm text-slate-500">Waiting for the host to start…</p>
+                  <p className="mt-4 font-display text-3xl font-bold tracking-widest text-brand-blue">{code}</p>
+                </div>
+              </Card>
+            )}
 
-        {/* ---- ACTIVE QUESTIONS (accumulating during round) ---- */}
-        {phase === 'question' && activeQuestions.length > 0 && (
-          <div className="space-y-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-              Round {currentRound}{totalRounds > 1 ? ` of ${totalRounds}` : ''}
-            </p>
-            {activeQuestions.map(q => (
-              <QuestionCard
-                key={q.id}
-                question={q}
-                textValue={textInputs[q.id] ?? ''}
-                selectedChoice={selectedChoices[q.id]}
-                onTextChange={(val) => setTextInputs(prev => ({ ...prev, [q.id]: val }))}
-                onSelectChoice={(choice) => setSelectedChoices(prev => ({ ...prev, [q.id]: choice }))}
-                onSubmitText={(e) => submitText(q.id, e)}
-                onSubmitChoice={() => submitChoice(q.id)}
-              />
-            ))}
-            <p className="text-center text-xs text-slate-400">
-              Waiting for the host to release more questions…
-            </p>
-          </div>
-        )}
-
-        {/* ---- WAITING FOR FIRST QUESTION ---- */}
-        {phase === 'question' && activeQuestions.length === 0 && (
-          <Card>
-            <p className="text-center text-sm text-slate-400 py-4">
-              Round {currentRound} is starting — get ready!
-            </p>
-          </Card>
-        )}
-
-        {/* ---- ROUND ENDED (waiting for host review) ---- */}
-        {phase === 'round_ended' && (
-          <Card>
-            <div className="py-6 text-center">
-              <div className="mb-3 text-5xl">⏸</div>
-              <p className="text-base font-semibold text-slate-700">Round {currentRound} complete!</p>
-              <p className="mt-1 text-sm text-slate-500">The host is reviewing answers…</p>
-            </div>
-          </Card>
-        )}
-
-        {/* ---- ROUND SCORES ---- */}
-        {phase === 'round_scores' && (
-          <div className="space-y-3">
-            <Card>
-              <div className="text-center mb-4">
-                <p className="text-base font-semibold text-slate-800">
-                  Round {currentRound} Results
-                </p>
-                <p className="mt-1 text-2xl font-bold text-brand-blue">
-                  +{roundScore.toLocaleString()} pts
-                </p>
-              </div>
+            {/* ---- ACTIVE QUESTIONS (accumulating during round) ---- */}
+            {phase === 'question' && activeQuestions.length > 0 && (
               <div className="space-y-3">
-                {roundResults.map(qr => (
-                  <div
-                    key={qr.question_id}
-                    className={`rounded-xl px-4 py-3 ${
-                      qr.correct ? 'bg-emerald-50 border border-emerald-100' : 'bg-slate-50 border border-gray-100'
-                    }`}
-                  >
-                    <p className="text-sm font-medium text-slate-700 mb-1">{qr.prompt}</p>
-                    <p className="text-xs text-slate-500">
-                      Correct: <span className="font-medium text-slate-700">{(qr.correct_answers ?? []).join(' · ')}</span>
-                    </p>
-                    {qr.your_answer && (
-                      <p className={`mt-1 text-xs font-medium ${qr.correct ? 'text-emerald-700' : 'text-slate-400'}`}>
-                        Your answer: &ldquo;{qr.your_answer}&rdquo;
-                        {qr.correct ? ' ✓' : ''}
-                        {qr.correct && qr.points_earned ? ` (+${qr.points_earned} pts)` : ''}
-                      </p>
-                    )}
-                    {!qr.your_answer && (
-                      <p className="mt-1 text-xs text-slate-400">Not answered</p>
-                    )}
-                  </div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                  Round {currentRound}{totalRounds > 1 ? ` of ${totalRounds}` : ''}
+                </p>
+                {activeQuestions.map(q => (
+                  <QuestionCard
+                    key={q.id}
+                    question={q}
+                    textValue={textInputs[q.id] ?? ''}
+                    selectedChoice={selectedChoices[q.id]}
+                    onTextChange={(val) => setTextInputs(prev => ({ ...prev, [q.id]: val }))}
+                    onSelectChoice={(choice) => setSelectedChoices(prev => ({ ...prev, [q.id]: choice }))}
+                    onSubmitText={(e) => submitText(q.id, e)}
+                    onSubmitChoice={() => submitChoice(q.id)}
+                  />
                 ))}
+                <p className="text-center text-xs text-slate-400">
+                  Waiting for the host to release more questions…
+                </p>
               </div>
-              <p className="mt-4 text-center text-xs text-slate-400">Waiting for leaderboard…</p>
-            </Card>
-          </div>
-        )}
+            )}
 
-        {/* ---- LEADERBOARD ---- */}
-        {(phase === 'leaderboard' || phase === 'ended') && (
-          <Card>
-            <p className="mb-4 text-base font-semibold text-slate-800">
-              {isFinal
-                ? '🏁 Final Results'
-                : `📊 After Round ${currentRound}${totalRounds > 1 ? ` of ${totalRounds}` : ''}`}
-            </p>
-            {leaderboard.length === 0 ? (
-              <p className="text-sm text-slate-400">No scores yet.</p>
-            ) : (
-              <ul className="space-y-2">
-                {leaderboard.map(e => (
-                  <li key={e.rank} className="flex items-center gap-3 rounded-lg bg-slate-50 px-4 py-3">
-                    <span className="w-8 text-center text-lg">
-                      {e.rank <= 3 ? medals[e.rank - 1] : `#${e.rank}`}
-                    </span>
-                    <span className="flex-1 text-sm font-medium text-slate-700">{e.display_name}</span>
-                    <span className="text-sm font-semibold text-slate-800">{e.score.toLocaleString()}</span>
-                  </li>
-                ))}
-              </ul>
+            {/* ---- WAITING FOR FIRST QUESTION ---- */}
+            {phase === 'question' && activeQuestions.length === 0 && (
+              <Card>
+                <p className="text-center text-sm text-slate-400 py-4">
+                  Round {currentRound} is starting — get ready!
+                </p>
+              </Card>
             )}
-            {isFinal && (
-              <button
-                onClick={() => router.push('/join')}
-                className="mt-6 w-full rounded-lg border border-gray-200 py-2.5 text-sm text-slate-600 hover:bg-slate-50"
-              >
-                Play Again
-              </button>
+
+            {/* ---- ROUND ENDED (waiting for host review) ---- */}
+            {phase === 'round_ended' && (
+              <Card>
+                <div className="py-6 text-center">
+                  <div className="mb-3 text-5xl">⏸</div>
+                  <p className="text-base font-semibold text-slate-700">Round {currentRound} complete!</p>
+                  <p className="mt-1 text-sm text-slate-500">The host is reviewing answers…</p>
+                </div>
+              </Card>
             )}
-            {!isFinal && (
-              <p className="mt-4 text-center text-xs text-slate-400">
-                Waiting for the next round…
-              </p>
+
+            {/* ---- ROUND SCORES ---- */}
+            {phase === 'round_scores' && (
+              <div className="space-y-3">
+                <Card>
+                  <div className="text-center mb-4">
+                    <p className="text-base font-semibold text-slate-800">
+                      Round {currentRound} Results
+                    </p>
+                    <p className="mt-1 text-2xl font-bold text-brand-blue">
+                      +{roundScore.toLocaleString()} pts
+                    </p>
+                  </div>
+                  <div className="space-y-3">
+                    {roundResults.map(qr => (
+                      <div
+                        key={qr.question_id}
+                        className={`rounded-xl px-4 py-3 ${
+                          qr.correct ? 'bg-emerald-50 border border-emerald-100' : 'bg-slate-50 border border-gray-100'
+                        }`}
+                      >
+                        <p className="text-sm font-medium text-slate-700 mb-1">{qr.prompt}</p>
+                        <p className="text-xs text-slate-500">
+                          Correct: <span className="font-medium text-slate-700">{(qr.correct_answers ?? []).join(' · ')}</span>
+                        </p>
+                        {qr.your_answer && (
+                          <p className={`mt-1 text-xs font-medium ${qr.correct ? 'text-emerald-700' : 'text-slate-400'}`}>
+                            Your answer: &ldquo;{qr.your_answer}&rdquo;
+                            {qr.correct ? ' ✓' : ''}
+                            {qr.correct && qr.points_earned ? ` (+${qr.points_earned} pts)` : ''}
+                          </p>
+                        )}
+                        {!qr.your_answer && (
+                          <p className="mt-1 text-xs text-slate-400">Not answered</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-4 text-center text-xs text-slate-400">Waiting for leaderboard…</p>
+                </Card>
+              </div>
             )}
-          </Card>
+
+            {/* ---- LEADERBOARD ---- */}
+            {(phase === 'leaderboard' || phase === 'ended') && (
+              <Card>
+                <p className="mb-4 text-base font-semibold text-slate-800">
+                  {isFinal
+                    ? '🏁 Final Results'
+                    : `📊 After Round ${currentRound}${totalRounds > 1 ? ` of ${totalRounds}` : ''}`}
+                </p>
+                {leaderboard.length === 0 ? (
+                  <p className="text-sm text-slate-400">No scores yet.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {leaderboard.map(e => (
+                      <li key={e.rank} className="flex items-center gap-3 rounded-lg bg-slate-50 px-4 py-3">
+                        <span className="w-8 text-center text-lg">
+                          {e.rank <= 3 ? medals[e.rank - 1] : `#${e.rank}`}
+                        </span>
+                        <span className="flex-1 text-sm font-medium text-slate-700">{e.display_name}</span>
+                        <span className="text-sm font-semibold text-slate-800">{e.score.toLocaleString()}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {isFinal && (
+                  <button
+                    onClick={() => router.push('/join')}
+                    className="mt-6 w-full rounded-lg border border-gray-200 py-2.5 text-sm text-slate-600 hover:bg-slate-50"
+                  >
+                    Play Again
+                  </button>
+                )}
+                {!isFinal && (
+                  <p className="mt-4 text-center text-xs text-slate-400">
+                    Waiting for the next round…
+                  </p>
+                )}
+              </Card>
+            )}
+          </>
         )}
 
       </div>
