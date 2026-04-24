@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/play-quibble/trivia/compare/v1.5.0...v1.6.0) (2026-04-24)
+
+
+### Features
+
+* **web:** add useHostSocket and usePlayerSocket typed hooks ([c4d5d8f](https://github.com/play-quibble/trivia/commit/c4d5d8fce2bf1704b807423c2a8fcdee8c4cc50d))
+
 # [1.5.0](https://github.com/play-quibble/trivia/compare/v1.4.0...v1.5.0) (2026-04-24)
 
 
