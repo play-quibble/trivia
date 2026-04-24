@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/play-quibble/trivia/compare/v1.4.0...v1.5.0) (2026-04-24)
+
+
+### Features
+
+* **web:** add useGameSocket core hook ([eb6ed4b](https://github.com/play-quibble/trivia/commit/eb6ed4bad7c9fe17ebf2fd6f050421b41d8d6a5b))
+
 # [1.4.0](https://github.com/play-quibble/trivia/compare/v1.3.0...v1.4.0) (2026-04-21)
 
 
