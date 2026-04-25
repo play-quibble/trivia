@@ -156,19 +156,6 @@ function RoundCard({
     })
   }
 
-  function handleMoveQuestion(questionID: string, direction: -1 | 1) {
-    const ids = round.questions.map(q => q.id)
-    const idx = ids.indexOf(questionID)
-    if (idx < 0) return
-    const newIdx = idx + direction
-    if (newIdx < 0 || newIdx >= ids.length) return
-    ;[ids[idx], ids[newIdx]] = [ids[newIdx], ids[idx]]
-    startRemove(async () => {
-      const res = await setRoundQuestionsAction(quizID, round.id, ids)
-      if (!res?.error) onRefresh()
-    })
-  }
-
   return (
     <div className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden">
       {/* Round header */}
@@ -221,22 +208,6 @@ function RoundCard({
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <button
-                  onClick={() => handleMoveQuestion(q.id, -1)}
-                  disabled={i === 0 || removing}
-                  title="Move up"
-                  className="rounded p-1 text-slate-400 hover:text-slate-600 disabled:opacity-20"
-                >
-                  ↑
-                </button>
-                <button
-                  onClick={() => handleMoveQuestion(q.id, 1)}
-                  disabled={i === round.questions.length - 1 || removing}
-                  title="Move down"
-                  className="rounded p-1 text-slate-400 hover:text-slate-600 disabled:opacity-20"
-                >
-                  ↓
-                </button>
-                <button
                   onClick={() => handleRemoveQuestion(q.id)}
                   disabled={removing}
                   title="Remove"
@@ -274,12 +245,20 @@ function QuestionPickerModal({
 
   const [stagedIDs, setStagedIDs] = useState<string[]>(round.questions.map(q => q.id))
 
+  // Lookup map so the right pane can show details for any staged question,
+  // even those from a bank that isn't currently loaded in the left pane.
+  const [questionMap, setQuestionMap] = useState<Record<string, Question>>(
+    Object.fromEntries(round.questions.map(q => [q.id, q]))
+  )
+
   // Load questions via server action so auth token stays server-side.
   async function loadBank(bankID: string) {
     onBankChange(bankID)
     setLoading(true)
     const qs = await listBankQuestionsAction(bankID)
     setBankQuestions(qs)
+    // Merge into the lookup map so the right pane keeps its data intact.
+    setQuestionMap(prev => ({ ...prev, ...Object.fromEntries(qs.map(q => [q.id, q])) }))
     setLoading(false)
   }
 
@@ -290,10 +269,24 @@ function QuestionPickerModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  function toggleQuestion(id: string) {
-    setStagedIDs(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    )
+  function addQuestion(id: string) {
+    setStagedIDs(prev => prev.includes(id) ? prev : [...prev, id])
+  }
+
+  function removeQuestion(id: string) {
+    setStagedIDs(prev => prev.filter(x => x !== id))
+  }
+
+  function moveQuestion(id: string, direction: -1 | 1) {
+    setStagedIDs(prev => {
+      const idx = prev.indexOf(id)
+      if (idx < 0) return prev
+      const newIdx = idx + direction
+      if (newIdx < 0 || newIdx >= prev.length) return prev
+      const next = [...prev]
+      ;[next[idx], next[newIdx]] = [next[newIdx], next[idx]]
+      return next
+    })
   }
 
   function handleSave() {
@@ -303,13 +296,16 @@ function QuestionPickerModal({
     })
   }
 
+  const stagedQuestions = stagedIDs.map(id => questionMap[id]).filter(Boolean) as Question[]
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="w-full max-w-4xl rounded-2xl bg-white shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
+
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <p className="font-semibold text-slate-800">
-            Add Questions — Round {round.round_number}
+            Edit Questions — Round {round.round_number}
           </p>
           <button
             onClick={onClose}
@@ -337,70 +333,138 @@ function QuestionPickerModal({
           </div>
         )}
 
-        {/* Question list */}
-        <div className="flex-1 overflow-y-auto px-6 py-4">
-          {loading ? (
-            <p className="text-sm text-slate-400 text-center py-8">Loading…</p>
-          ) : bankQuestions.length === 0 ? (
-            <p className="text-sm text-slate-400 text-center py-8">
-              No questions in this bank yet.
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {bankQuestions.map(q => {
-                const selected = stagedIDs.includes(q.id)
-                return (
-                  <li
-                    key={q.id}
-                    onClick={() => toggleQuestion(q.id)}
-                    className={`flex items-start gap-3 rounded-xl border px-4 py-3 cursor-pointer transition-all ${
-                      selected
-                        ? 'border-brand-blue/40 bg-brand-blue/5'
-                        : 'border-gray-100 bg-white hover:border-gray-200'
-                    }`}
-                  >
-                    <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 text-xs font-bold ${
-                      selected
-                        ? 'border-brand-blue bg-brand-blue text-white'
-                        : 'border-gray-300'
-                    }`}>
-                      {selected ? stagedIDs.indexOf(q.id) + 1 : ''}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-slate-700">{q.prompt}</p>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        {q.type === 'multiple_choice' ? 'Multiple choice' : 'Text answer'}
-                        {' · '}{q.points} pts
-                      </p>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
+        {/* Two-pane body */}
+        <div className="flex flex-1 overflow-hidden min-h-0">
+
+          {/* Left pane: bank */}
+          <div className="flex flex-col w-1/2 border-r border-gray-100">
+            <div className="px-4 py-2.5 border-b border-gray-100 bg-slate-50">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Bank</p>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-3">
+              {loading ? (
+                <p className="text-sm text-slate-400 text-center py-8">Loading…</p>
+              ) : bankQuestions.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">
+                  No questions in this bank yet.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {bankQuestions.map(q => {
+                    const pos = stagedIDs.indexOf(q.id)
+                    const selected = pos !== -1
+                    return (
+                      <li
+                        key={q.id}
+                        onClick={() => selected ? removeQuestion(q.id) : addQuestion(q.id)}
+                        className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 cursor-pointer transition-all ${
+                          selected
+                            ? 'border-brand-blue/40 bg-brand-blue/5'
+                            : 'border-gray-100 bg-white hover:border-gray-200'
+                        }`}
+                      >
+                        <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 text-xs font-bold ${
+                          selected
+                            ? 'border-brand-blue bg-brand-blue text-white'
+                            : 'border-gray-300'
+                        }`}>
+                          {selected ? pos + 1 : ''}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-slate-700">{q.prompt}</p>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {q.type === 'multiple_choice' ? 'Multiple choice' : 'Text answer'}
+                            {' · '}{q.points} pts
+                          </p>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          {/* Right pane: round order */}
+          <div className="flex flex-col w-1/2">
+            <div className="px-4 py-2.5 border-b border-gray-100 bg-slate-50">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                Round {round.round_number}
+                <span className="ml-1 normal-case font-normal">
+                  · {stagedIDs.length} question{stagedIDs.length !== 1 ? 's' : ''}
+                </span>
+              </p>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-3">
+              {stagedQuestions.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8 italic leading-relaxed">
+                  No questions added yet —<br />click questions on the left to add them.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {stagedQuestions.map((q, i) => (
+                    <li key={q.id} className="flex items-start gap-3 rounded-xl border border-brand-blue/20 bg-brand-blue/5 px-3 py-2.5">
+                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-blue text-xs font-bold text-white">
+                        {i + 1}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-slate-700">{q.prompt}</p>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          {q.type === 'multiple_choice' ? 'Multiple choice' : 'Text answer'}
+                          {' · '}{q.points} pts
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <button
+                          onClick={() => moveQuestion(q.id, -1)}
+                          disabled={i === 0}
+                          title="Move up"
+                          className="rounded p-1 text-slate-400 hover:text-slate-600 disabled:opacity-20"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          onClick={() => moveQuestion(q.id, 1)}
+                          disabled={i === stagedQuestions.length - 1}
+                          title="Move down"
+                          className="rounded p-1 text-slate-400 hover:text-slate-600 disabled:opacity-20"
+                        >
+                          ↓
+                        </button>
+                        <button
+                          onClick={() => removeQuestion(q.id)}
+                          title="Remove"
+                          className="rounded p-1 text-slate-400 hover:text-brand-red"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-100 bg-slate-50">
-          <p className="text-sm text-slate-500">
-            {stagedIDs.length} question{stagedIDs.length !== 1 ? 's' : ''} selected
-          </p>
-          <div className="flex gap-3">
-            <button
-              onClick={onClose}
-              className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-100"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="rounded-lg bg-brand-blue px-4 py-2 text-sm font-semibold text-white hover:bg-brand-blue/90 disabled:opacity-40 transition-colors"
-            >
-              {saving ? 'Saving…' : 'Save'}
-            </button>
-          </div>
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100 bg-slate-50">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-100"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="rounded-lg bg-brand-blue px-4 py-2 text-sm font-semibold text-white hover:bg-brand-blue/90 disabled:opacity-40 transition-colors"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
         </div>
+
       </div>
     </div>
   )
