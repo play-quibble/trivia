@@ -364,7 +364,7 @@ function QuestionPickerModal({
                         ? 'border-brand-blue bg-brand-blue text-white'
                         : 'border-gray-300'
                     }`}>
-                      {selected ? '✓' : ''}
+                      {selected ? stagedIDs.indexOf(q.id) + 1 : ''}
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-slate-700">{q.prompt}</p>
