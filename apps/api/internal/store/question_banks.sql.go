@@ -12,10 +12,40 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createDefaultBank = `-- name: CreateDefaultBank :one
+INSERT INTO question_banks (id, owner_id, name, is_default)
+VALUES ($1, $2, $3, true)
+RETURNING id, owner_id, name, description, created_at, updated_at, is_default
+`
+
+type CreateDefaultBankParams struct {
+	ID      uuid.UUID `json:"id"`
+	OwnerID uuid.UUID `json:"owner_id"`
+	Name    string    `json:"name"`
+}
+
+// CreateDefaultBank inserts the owner's default bank. The partial unique index
+// question_banks_one_default_per_owner guarantees at most one per owner, so a
+// concurrent insert raises a unique violation rather than creating a duplicate.
+func (q *Queries) CreateDefaultBank(ctx context.Context, arg CreateDefaultBankParams) (QuestionBank, error) {
+	row := q.db.QueryRow(ctx, createDefaultBank, arg.ID, arg.OwnerID, arg.Name)
+	var i QuestionBank
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsDefault,
+	)
+	return i, err
+}
+
 const createQuestionBank = `-- name: CreateQuestionBank :one
 INSERT INTO question_banks (id, owner_id, name, description)
 VALUES ($1, $2, $3, $4)
-RETURNING id, owner_id, name, description, created_at, updated_at
+RETURNING id, owner_id, name, description, created_at, updated_at, is_default
 `
 
 type CreateQuestionBankParams struct {
@@ -40,6 +70,7 @@ func (q *Queries) CreateQuestionBank(ctx context.Context, arg CreateQuestionBank
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsDefault,
 	)
 	return i, err
 }
@@ -53,8 +84,30 @@ func (q *Queries) DeleteQuestionBank(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const getDefaultBank = `-- name: GetDefaultBank :one
+SELECT id, owner_id, name, description, created_at, updated_at, is_default FROM question_banks
+WHERE owner_id = $1 AND is_default
+`
+
+// GetDefaultBank returns the owner's implicit "default" bank, if one exists.
+// Returns no rows when the user has not created a question inline yet.
+func (q *Queries) GetDefaultBank(ctx context.Context, ownerID uuid.UUID) (QuestionBank, error) {
+	row := q.db.QueryRow(ctx, getDefaultBank, ownerID)
+	var i QuestionBank
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsDefault,
+	)
+	return i, err
+}
+
 const getQuestionBank = `-- name: GetQuestionBank :one
-SELECT id, owner_id, name, description, created_at, updated_at FROM question_banks WHERE id = $1
+SELECT id, owner_id, name, description, created_at, updated_at, is_default FROM question_banks WHERE id = $1
 `
 
 func (q *Queries) GetQuestionBank(ctx context.Context, id uuid.UUID) (QuestionBank, error) {
@@ -67,12 +120,13 @@ func (q *Queries) GetQuestionBank(ctx context.Context, id uuid.UUID) (QuestionBa
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsDefault,
 	)
 	return i, err
 }
 
 const listQuestionBanksByOwner = `-- name: ListQuestionBanksByOwner :many
-SELECT id, owner_id, name, description, created_at, updated_at FROM question_banks
+SELECT id, owner_id, name, description, created_at, updated_at, is_default FROM question_banks
 WHERE owner_id = $1
 ORDER BY created_at DESC
 `
@@ -93,6 +147,7 @@ func (q *Queries) ListQuestionBanksByOwner(ctx context.Context, ownerID uuid.UUI
 			&i.Description,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IsDefault,
 		); err != nil {
 			return nil, err
 		}
@@ -109,7 +164,7 @@ UPDATE question_banks
 SET name        = $2,
     description = $3
 WHERE id = $1
-RETURNING id, owner_id, name, description, created_at, updated_at
+RETURNING id, owner_id, name, description, created_at, updated_at, is_default
 `
 
 type UpdateQuestionBankParams struct {
@@ -128,6 +183,7 @@ func (q *Queries) UpdateQuestionBank(ctx context.Context, arg UpdateQuestionBank
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsDefault,
 	)
 	return i, err
 }

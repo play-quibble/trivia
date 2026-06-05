@@ -9,6 +9,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// RoundWithQuestions is a convenience type used by the hub to load all
+// questions for a round in one structure. It is not a database table, so it
+// lives here in the hand-written file rather than in the sqlc-generated
+// models.go (where `make sqlc` would drop it on regeneration).
+type RoundWithQuestions struct {
+	Round     QuizRound
+	Questions []Question
+}
+
 // ---- Quiz CRUD ---------------------------------------------------------------
 
 const createQuiz = `

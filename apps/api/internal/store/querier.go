@@ -16,7 +16,12 @@ type Querier interface {
 	AddScoreToPlayer(ctx context.Context, arg AddScoreToPlayerParams) (GamePlayer, error)
 	AdvanceGameQuestion(ctx context.Context, id uuid.UUID) (Game, error)
 	CancelGame(ctx context.Context, id uuid.UUID) (Game, error)
+	ClearPlayerLeft(ctx context.Context, id uuid.UUID) error
 	CountQuestionsInBank(ctx context.Context, bankID uuid.UUID) (int32, error)
+	// CreateDefaultBank inserts the owner's default bank. The partial unique index
+	// question_banks_one_default_per_owner guarantees at most one per owner, so a
+	// concurrent insert raises a unique violation rather than creating a duplicate.
+	CreateDefaultBank(ctx context.Context, arg CreateDefaultBankParams) (QuestionBank, error)
 	CreateGame(ctx context.Context, arg CreateGameParams) (Game, error)
 	CreateQuestion(ctx context.Context, arg CreateQuestionParams) (Question, error)
 	CreateQuestionBank(ctx context.Context, arg CreateQuestionBankParams) (QuestionBank, error)
@@ -26,6 +31,9 @@ type Querier interface {
 	EndGame(ctx context.Context, id uuid.UUID) (Game, error)
 	GetActiveGameByCode(ctx context.Context, code string) (Game, error)
 	GetAnswer(ctx context.Context, arg GetAnswerParams) (Answer, error)
+	// GetDefaultBank returns the owner's implicit "default" bank, if one exists.
+	// Returns no rows when the user has not created a question inline yet.
+	GetDefaultBank(ctx context.Context, ownerID uuid.UUID) (QuestionBank, error)
 	GetGameByID(ctx context.Context, id uuid.UUID) (Game, error)
 	GetPlayer(ctx context.Context, id uuid.UUID) (GamePlayer, error)
 	GetPlayerBySessionToken(ctx context.Context, sessionToken string) (GamePlayer, error)
