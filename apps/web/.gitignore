@@ -1,1 +1,2 @@
-*.tsbuildinfo # or root .gitignore
+# TypeScript incremental build cache
+*.tsbuildinfo
