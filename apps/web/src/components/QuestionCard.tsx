@@ -1,13 +1,13 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import type { Question, MCChoice } from '@/types'
-import { MAX_PROMPT_LEN, MAX_CHOICE_LEN, MAX_ANSWER_LEN, MAX_CHOICES, MIN_CHOICES, MAX_ANSWERS } from '@/types'
+import type { Question } from '@/types'
 import {
   updateTextQuestionAction,
   updateMCQuestionAction,
   deleteQuestionAction,
 } from '@/app/(host)/banks/[bankID]/actions'
+import QuestionForm, { type QuestionFormValues } from '@/components/QuestionForm'
 
 interface QuestionCardProps {
   bankId: string
@@ -159,8 +159,9 @@ export default function QuestionCard({
   )
 }
 
-// QuestionEditForm is an inline edit form embedded inside QuestionCard.
-// It mirrors the structure of AddQuestionForm but operates on an existing question.
+// QuestionEditForm is the inline edit wrapper embedded inside QuestionCard.
+// It supplies the edit card chrome and wires QuestionForm to the update actions.
+// The question's type is fixed, so the form is rendered with `lockType`.
 function QuestionEditForm({
   bankId,
   question,
@@ -173,60 +174,18 @@ function QuestionEditForm({
   onCancel: () => void
 }) {
   const [isPending, startTransition] = useTransition()
-  const [prompt, setPrompt] = useState(question.prompt)
-  const [points, setPoints] = useState(String(question.points))
 
-  // Text question state
-  const [answers, setAnswers] = useState<string[]>(
-    question.accepted_answers?.length ? question.accepted_answers : [''],
-  )
-
-  // MC question state
-  const [choices, setChoices] = useState<MCChoice[]>(
-    question.choices?.length
-      ? question.choices
-      : [
-          { text: '', correct: true },
-          { text: '', correct: false },
-        ],
-  )
-
-  function addAnswer() {
-    if (answers.length < MAX_ANSWERS) setAnswers([...answers, ''])
-  }
-  function removeAnswer(i: number) {
-    if (answers.length <= 1) return
-    setAnswers(answers.filter((_, idx) => idx !== i))
-  }
-  function setAnswer(i: number, val: string) {
-    setAnswers(answers.map((a, idx) => (idx === i ? val : a)))
-  }
-
-  function addChoice() {
-    if (choices.length < MAX_CHOICES) setChoices([...choices, { text: '', correct: false }])
-  }
-  function removeChoice(i: number) {
-    if (choices.length <= MIN_CHOICES) return
-    setChoices(choices.filter((_, idx) => idx !== i))
-  }
-  function setChoiceText(i: number, val: string) {
-    setChoices(choices.map((c, idx) => (idx === i ? { ...c, text: val } : c)))
-  }
-  function setCorrectChoice(i: number) {
-    setChoices(choices.map((c, idx) => ({ ...c, correct: idx === i })))
-  }
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    const pts = Math.max(1, parseInt(points, 10) || 1000)
-
+  function handleSubmit(values: QuestionFormValues) {
     startTransition(async () => {
       if (question.type === 'text') {
-        const trimmed = answers.map((a) => a.trim()).filter(Boolean)
-        const result = await updateTextQuestionAction(bankId, question.id, prompt.trim(), trimmed, pts)
+        const result = await updateTextQuestionAction(
+          bankId, question.id, values.prompt, values.acceptedAnswers, values.points,
+        )
         if (result.question) onSave(result.question)
       } else {
-        const result = await updateMCQuestionAction(bankId, question.id, prompt.trim(), choices, pts)
+        const result = await updateMCQuestionAction(
+          bankId, question.id, values.prompt, values.choices, values.points,
+        )
         if (result.question) onSave(result.question)
       }
     })
@@ -235,127 +194,21 @@ function QuestionEditForm({
   return (
     <div className="overflow-hidden rounded-xl border border-brand-blue/30 bg-white shadow-md ring-1 ring-brand-blue/10">
       <div className="h-[3px] bg-brand-blue" />
-      <form onSubmit={handleSubmit} className="space-y-4 p-5">
-        {/* Prompt */}
-        <div>
-          <label className="mb-1.5 block text-sm font-medium text-gray-700">
-            Question <span className="text-brand-red">*</span>
-            <span className="ml-2 font-normal text-gray-400">
-              {prompt.length}/{MAX_PROMPT_LEN}
-            </span>
-          </label>
-          <textarea
-            required
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            maxLength={MAX_PROMPT_LEN}
-            rows={2}
-            className="w-full resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
-          />
-        </div>
-
-        {/* Points */}
-        <div className="flex items-center gap-3">
-          <label className="text-sm font-medium text-gray-700">Points</label>
-          <input
-            type="number"
-            min={1}
-            max={10000}
-            value={points}
-            onChange={(e) => setPoints(e.target.value)}
-            className="w-24 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
-          />
-        </div>
-
-        {/* Type-specific fields */}
-        {question.type === 'text' ? (
-          <div>
-            <p className="mb-2 text-sm font-medium text-gray-700">
-              Accepted Answers <span className="text-brand-red">*</span>
-              <span className="ml-2 font-normal text-gray-400 text-xs">(primary first, alternates/synonyms below)</span>
-            </p>
-            <div className="space-y-2">
-              {answers.map((ans, i) => (
-                <div key={i} className="flex gap-2">
-                  <input
-                    type="text"
-                    value={ans}
-                    onChange={(e) => setAnswer(i, e.target.value)}
-                    maxLength={MAX_ANSWER_LEN}
-                    placeholder={i === 0 ? 'Primary answer' : 'Alternate spelling or synonym'}
-                    required={i === 0}
-                    className="flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
-                  />
-                  {i > 0 && (
-                    <button type="button" onClick={() => removeAnswer(i)}
-                      className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-400 hover:bg-red-50 hover:text-brand-red">
-                      ✕
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-            {answers.length < MAX_ANSWERS && (
-              <button type="button" onClick={addAnswer}
-                className="mt-2 text-xs font-medium text-brand-blue hover:underline">
-                + Add alternate answer
-              </button>
-            )}
-          </div>
-        ) : (
-          <div>
-            <p className="mb-2 text-sm font-medium text-gray-700">
-              Choices <span className="text-brand-red">*</span>
-              <span className="ml-2 font-normal text-gray-400 text-xs">(select the correct one)</span>
-            </p>
-            <div className="space-y-2">
-              {choices.map((choice, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    name="correct"
-                    checked={choice.correct}
-                    onChange={() => setCorrectChoice(i)}
-                    className="accent-brand-blue"
-                  />
-                  <input
-                    type="text"
-                    value={choice.text}
-                    onChange={(e) => setChoiceText(i, e.target.value)}
-                    maxLength={MAX_CHOICE_LEN}
-                    placeholder={`Choice ${i + 1}`}
-                    required
-                    className="flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
-                  />
-                  {choices.length > MIN_CHOICES && (
-                    <button type="button" onClick={() => removeChoice(i)}
-                      className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-400 hover:bg-red-50 hover:text-brand-red">
-                      ✕
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-            {choices.length < MAX_CHOICES && (
-              <button type="button" onClick={addChoice}
-                className="mt-2 text-xs font-medium text-brand-blue hover:underline">
-                + Add choice
-              </button>
-            )}
-          </div>
-        )}
-
-        <div className="flex justify-end gap-2 pt-1">
-          <button type="button" onClick={onCancel} disabled={isPending}
-            className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-slate-50 disabled:opacity-50">
-            Cancel
-          </button>
-          <button type="submit" disabled={isPending}
-            className="rounded-lg bg-brand-blue px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50">
-            {isPending ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-      </form>
+      <QuestionForm
+        initialValues={{
+          type: question.type,
+          prompt: question.prompt,
+          points: question.points,
+          acceptedAnswers: question.accepted_answers,
+          choices: question.choices,
+        }}
+        lockType
+        submitLabel="Save"
+        isPending={isPending}
+        className="space-y-4 p-5"
+        onSubmit={handleSubmit}
+        onCancel={onCancel}
+      />
     </div>
   )
 }
